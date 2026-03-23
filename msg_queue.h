@@ -12,6 +12,13 @@
 extern "C" {
 #endif
 
+// 常量定义
+#define MSG_QUEUE_NAME_MAX_LEN 8
+#define MSG_QUEUE_STORAGE_SIZE 20
+#define MSG_QUEUE_ITEM_SIZE sizeof(msg_base*)
+#define MSG_QUEUE_MAX_ITEMS MSG_QUEUE_STORAGE_SIZE
+#define MSG_QUEUE_BUFFER_SIZE (MSG_QUEUE_MAX_ITEMS * MSG_QUEUE_ITEM_SIZE)
+
 // 消息类型枚举
 typedef enum {
     MSG_TYPE_DATA = 1,
@@ -23,13 +30,15 @@ typedef struct msg_base {
     // 虚析构函数模拟
     void (*destroy)(struct msg_base* self);
     // 添加类型 ID 用于运行时识别
-    int type_id;
+    uint8_t type_id;
+    // 单队列优化：添加目标名称用于路由
+    char target_name[MSG_QUEUE_NAME_MAX_LEN];
 } msg_base;
 
 // 对应 TimeoutMsg
 typedef struct timeout_msg {
     msg_base base;
-    int timeout_ms;
+    uint16_t timeout_ms;
 } timeout_msg;
 
 // 对应 MsgQueue::MsgQueueCode
@@ -55,20 +64,21 @@ typedef void (*msg_callback)(msg_base* msg);
 // 消息队列对象 (Opaque Handle)
 typedef struct msg_queue_obj {
     QueueHandle_t x_queue;                    /**< FreeRTOS 队列，存储 msg_base* */
-    TaskHandle_t x_task_handle;               /**< 后台处理任务 */
+
     volatile bool b_stop;                      /**< 停止标志 */
+    bool b_static;                             /**< 是否为静态创建 */
 
     // 配置参数
-    uint32_t ul_max_size;                      /**< 最大消息数量 */
-    int i_get_msg_timeout_ms;                  /**< 接收超时 (生成 timeout_msg) */
-    int i_push_timeout_ms;                    /**< 发送默认超时 */
+    uint8_t ul_max_size;                      /**< 最大消息数量 */
+    int16_t i_get_msg_timeout_ms;             /**< 接收超时 (生成 timeout_msg) */
+    int16_t i_push_timeout_ms;                /**< 发送默认超时 */
 
     // 回调
     msg_callback pfn_callback;                 /**< 消息处理回调函数 */
 
     // 静态缓冲区
     StaticQueue_t x_queue_buffer;             /**< 静态队列缓冲区 */
-    uint8_t queue_storage[sizeof(msg_base*) * 20]; /**< 队列存储空间 (最大20个消息) */
+    uint8_t queue_storage[sizeof(msg_base*) * MSG_QUEUE_STORAGE_SIZE]; /**< 队列存储空间 */
     StaticTask_t x_task_buffer;               /**< 静态任务缓冲区 */
     StackType_t task_stack[configMINIMAL_STACK_SIZE * 4]; /**< 任务栈空间 */
 } msg_queue_obj;
@@ -83,19 +93,18 @@ typedef msg_queue_obj* msg_queue_handle;
 msg_queue_handle msg_queue_create(uint32_t max_size);
 
 /**
+ * @brief 创建静态消息队列（单队列优化）
+ * @param max_size 最大消息数量
+ * @return 句柄，失败返回 NULL
+ */
+msg_queue_handle msg_queue_create_static(uint32_t max_size);
+
+/**
  * @brief 销毁消息队列，停止线程，清理剩余消息
  */
 void msg_queue_destroy(msg_queue_handle h_queue);
 
-/**
- * @brief 启动后台处理线程 (对应 BenewThread 启动)
- */
-void msg_queue_start(msg_queue_handle h_queue);
 
-/**
- * @brief 停止后台线程 (不销毁对象，仅停止循环)
- */
-void msg_queue_stop(msg_queue_handle h_queue);
 
 /**
  * @brief 推送消息 (非阻塞尝试)
@@ -119,7 +128,7 @@ msg_queue_code msg_queue_push_block(msg_queue_handle h_queue, msg_base* msg);
  * @brief 带超时推送
  * 对应 PushWithTimeout
  */
-msg_queue_code msg_queue_push_with_timeout(msg_queue_handle h_queue, msg_base* msg, int timeout_ms);
+msg_queue_code msg_queue_push_with_timeout(msg_queue_handle h_queue, msg_base* msg, int16_t timeout_ms);
 
 /**
  * @brief 弹出消息 (供外部主动拉取)
@@ -142,7 +151,7 @@ static inline void msg_queue_set_callback(msg_queue_handle h_queue, msg_callback
  * @param h_queue 队列句柄
  * @param ms 超时时间(毫秒)，-1表示无超时
  */
-static inline void msg_queue_set_get_msg_timeout_ms(msg_queue_handle h_queue, int ms) {
+static inline void msg_queue_set_get_msg_timeout_ms(msg_queue_handle h_queue, int16_t ms) {
     if (h_queue) h_queue->i_get_msg_timeout_ms = ms;
 }
 
@@ -152,7 +161,7 @@ static inline void msg_queue_set_get_msg_timeout_ms(msg_queue_handle h_queue, in
  * @param h_queue 队列句柄
  * @param ms 超时时间(毫秒)
  */
-static inline void msg_queue_set_push_timeout_ms(msg_queue_handle h_queue, int ms) {
+static inline void msg_queue_set_push_timeout_ms(msg_queue_handle h_queue, int16_t ms) {
     if (h_queue) h_queue->i_push_timeout_ms = ms;
 }
 
@@ -170,7 +179,7 @@ static inline int msg_queue_size(msg_queue_handle h_queue) {
  * @brief 辅助函数：创建超时消息
  * 用户也可以自己 malloc 并初始化，此函数方便使用
  */
-timeout_msg* timeout_msg_create(int ms);
+timeout_msg* timeout_msg_create(int16_t ms);
 
 #ifdef __cplusplus
 }

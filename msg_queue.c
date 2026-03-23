@@ -21,7 +21,7 @@ static void prv_timeout_msg_destroy(msg_base* self) {
     }
 }
 
-timeout_msg* timeout_msg_create(int ms) {
+timeout_msg* timeout_msg_create(int16_t ms) {
     timeout_msg* p_msg = (timeout_msg*)pvPortMalloc(sizeof(timeout_msg));
     if (p_msg) {
         p_msg->base.destroy = prv_timeout_msg_destroy;
@@ -35,70 +35,7 @@ timeout_msg* timeout_msg_create(int ms) {
 // 后台任务线程 (对应 WaitAndPopLoop 和 ThreadFunc)
 // ============================================================================
 
-static void prv_msg_queue_task(void *pv_parameters) {
-    msg_queue_obj* p_obj = (msg_queue_obj*)pv_parameters;
-    msg_base* px_msg = NULL;
-    TickType_t x_ticks_to_wait;
-    BaseType_t x_result;
 
-    while (!p_obj->b_stop) {
-        // 决定等待时间
-        if (p_obj->i_get_msg_timeout_ms > 0) {
-            x_ticks_to_wait = pdMS_TO_TICKS(p_obj->i_get_msg_timeout_ms);
-        } else {
-            x_ticks_to_wait = portMAX_DELAY;
-        }
-
-        // 尝试接收消息
-        // 如果设置了超时时间，这里会阻塞最多 xTicksToWait
-        // 如果没有设置 (<=0)，这里一直阻塞直到有消息
-        x_result = xQueueReceive(p_obj->x_queue, &px_msg, x_ticks_to_wait);
-
-        if (p_obj->b_stop) {
-            break;
-        }
-
-        if (x_result == pdFALSE) {
-            // --- 超时发生 ---
-            // 逻辑：生成 timeout_msg 并回调
-            
-            if (p_obj->i_get_msg_timeout_ms > 0) {
-                // 检查队列是否真的为空（防止竞争条件，虽然单消费者任务下通常不需要）
-                // 创建超时消息
-                timeout_msg* p_timeout_msg = timeout_msg_create(p_obj->i_get_msg_timeout_ms);
-                
-                if (p_timeout_msg != NULL) {
-                    if (p_obj->pfn_callback != NULL) {
-                        p_obj->pfn_callback((msg_base*)p_timeout_msg);
-                    }
-                    // 模拟 unique_ptr 离开作用域：调用 destroy 释放内存
-                    if (p_timeout_msg->base.destroy) {
-                        p_timeout_msg->base.destroy((msg_base*)p_timeout_msg);
-                    }
-                }
-            }
-            // 继续循环
-            continue;
-        }
-
-        // --- 收到有效消息 ---
-        // px_msg 现在指向从队列取出的消息指针
-        
-        if (px_msg != NULL && p_obj->pfn_callback != NULL) {
-            p_obj->pfn_callback(px_msg);
-            
-            // 回调处理后，释放消息内存
-            if (px_msg->destroy) {
-                px_msg->destroy(px_msg);
-            }
-        }
-        
-        // 在 RTOS 中，短暂延时让出 CPU，防止高优先级死循环占用
-        vTaskDelay(pdMS_TO_TICKS(1)); 
-    }
-
-    vTaskDelete(NULL);
-}
 
 // ============================================================================
 // API 实现
@@ -111,8 +48,8 @@ msg_queue_handle msg_queue_create(uint32_t max_size) {
     }
 
     // 限制最大大小以适应静态缓冲区
-    if (max_size > 20) {
-        max_size = 20;
+    if (max_size > MSG_QUEUE_STORAGE_SIZE) {
+        max_size = MSG_QUEUE_STORAGE_SIZE;
     }
 
     // 创建静态队列
@@ -127,34 +64,43 @@ msg_queue_handle msg_queue_create(uint32_t max_size) {
     p_obj->i_get_msg_timeout_ms = -1; // 默认无超时生成
     p_obj->i_push_timeout_ms = -1;   // 默认阻塞
     p_obj->b_stop = false;
+    p_obj->b_static = false;         // 动态创建
     p_obj->pfn_callback = NULL;
-    p_obj->x_task_handle = NULL;
 
     return p_obj;
+}
+
+msg_queue_handle msg_queue_create_static(uint32_t max_size) {
+
+    static msg_queue_obj static_queue_obj = {0};
+
+    // 限制最大大小以适应静态缓冲区
+    if (max_size > MSG_QUEUE_MAX_ITEMS) {
+        max_size = MSG_QUEUE_MAX_ITEMS;
+    }
+
+    // 创建静态队列
+    static_queue_obj.x_queue = xQueueCreateStatic(max_size, sizeof(msg_base*),
+                                                 static_queue_obj.queue_storage,
+                                                 &static_queue_obj.x_queue_buffer);
+    if (static_queue_obj.x_queue == NULL) {
+        return NULL;
+    }
+
+    static_queue_obj.ul_max_size = max_size;
+    static_queue_obj.i_get_msg_timeout_ms = -1; // 默认无超时生成
+    static_queue_obj.i_push_timeout_ms = -1;   // 默认阻塞
+    static_queue_obj.b_stop = false;
+    static_queue_obj.b_static = true;          // 静态创建
+    static_queue_obj.pfn_callback = NULL;
+
+    return &static_queue_obj;
 }
 
 void msg_queue_destroy(msg_queue_handle h_queue) {
     if (h_queue == NULL) return;
 
-    // 1. 通知线程停止
-    h_queue->b_stop = true;
 
-    // 2. 唤醒阻塞在 xQueueReceive 的任务
-    msg_base* dummy = NULL;
-    xQueueSend(h_queue->x_queue, &dummy, 0);
-
-    // 等待一小段时间让任务退出
-    int wait_count = 0;
-    while (h_queue->x_task_handle != NULL && wait_count < 100) {
-        vTaskDelay(pdMS_TO_TICKS(1));
-        wait_count++;
-    }
-
-    // 如果任务还没退出的极端情况，强制删除
-    if (h_queue->x_task_handle != NULL) {
-        vTaskDelete(h_queue->x_task_handle);
-        h_queue->x_task_handle = NULL;
-    }
 
     // 3. 清理队列中剩余的消息
     msg_base* px_msg;
@@ -164,30 +110,18 @@ void msg_queue_destroy(msg_queue_handle h_queue) {
         }
     }
 
-    // 4. 静态对象不需要删除，只需要释放结构体内存
-    vPortFree(h_queue);
-}
-
-void msg_queue_start(msg_queue_handle h_queue) {
-    if (h_queue == NULL || h_queue->x_task_handle != NULL) return;
-
-    // 创建静态任务
-    h_queue->x_task_handle = xTaskCreateStatic(prv_msg_queue_task,
-                                             "MsgQ_Task",
-                                             configMINIMAL_STACK_SIZE * 4,
-                                             (void*)h_queue,
-                                             tskIDLE_PRIORITY + 2,
-                                             h_queue->task_stack,
-                                             &h_queue->x_task_buffer);
-
-    if (h_queue->x_task_handle == NULL) {
-        // 错误处理
+    // 4. 根据创建方式处理清理
+    if (h_queue->b_static) {
+        // 静态对象：只重置状态，不释放内存
+        h_queue->b_stop = false;
+        h_queue->pfn_callback = NULL;
+    } else {
+        // 动态对象：释放结构体内存
+        vPortFree(h_queue);
     }
 }
 
-void msg_queue_stop(msg_queue_handle h_queue) {
-    if (h_queue) h_queue->b_stop = true;
-}
+
 
 // 内部辅助：尝试推送 (对应 TryPush)
 static msg_queue_code prv_try_push_internal(msg_queue_handle h_queue, msg_base* msg) {
@@ -219,7 +153,7 @@ msg_queue_code msg_queue_push_block(msg_queue_handle h_queue, msg_base* msg) {
     return MSG_QUEUE_CODE_ERROR;
 }
 
-msg_queue_code msg_queue_push_with_timeout(msg_queue_handle h_queue, msg_base* msg, int timeout_ms) {
+msg_queue_code msg_queue_push_with_timeout(msg_queue_handle h_queue, msg_base* msg, int16_t timeout_ms) {
     if (h_queue == NULL || msg == NULL) return MSG_QUEUE_CODE_ERROR;
     
     TickType_t ticks = (timeout_ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
