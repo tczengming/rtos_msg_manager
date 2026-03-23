@@ -53,7 +53,26 @@ typedef enum {
 typedef void (*msg_callback)(msg_base* msg);
 
 // 消息队列对象 (Opaque Handle)
-typedef struct msg_queue_obj msg_queue_obj;
+typedef struct msg_queue_obj {
+    QueueHandle_t x_queue;                    /**< FreeRTOS 队列，存储 msg_base* */
+    TaskHandle_t x_task_handle;               /**< 后台处理任务 */
+    volatile bool b_stop;                      /**< 停止标志 */
+
+    // 配置参数
+    uint32_t ul_max_size;                      /**< 最大消息数量 */
+    int i_get_msg_timeout_ms;                  /**< 接收超时 (生成 timeout_msg) */
+    int i_push_timeout_ms;                    /**< 发送默认超时 */
+
+    // 回调
+    msg_callback pfn_callback;                 /**< 消息处理回调函数 */
+
+    // 静态缓冲区
+    StaticQueue_t x_queue_buffer;             /**< 静态队列缓冲区 */
+    uint8_t queue_storage[sizeof(msg_base*) * 20]; /**< 队列存储空间 (最大20个消息) */
+    StaticTask_t x_task_buffer;               /**< 静态任务缓冲区 */
+    StackType_t task_stack[configMINIMAL_STACK_SIZE * 4]; /**< 任务栈空间 */
+} msg_queue_obj;
+
 typedef msg_queue_obj* msg_queue_handle;
 
 /**
@@ -110,25 +129,42 @@ msg_queue_code msg_queue_pop(msg_queue_handle h_queue, msg_base** out_msg, pop_t
 
 /**
  * @brief 设置消息处理回调
+ * @param h_queue 队列句柄
+ * @param cb 回调函数
  */
-void msg_queue_set_callback(msg_queue_handle h_queue, msg_callback cb);
+static inline void msg_queue_set_callback(msg_queue_handle h_queue, msg_callback cb) {
+    if (h_queue) h_queue->pfn_callback = cb;
+}
 
 /**
  * @brief 设置获取消息的超时时间 (用于生成 TimeoutMsg)
  * 对应 SetGetMsgTimeoutMs
+ * @param h_queue 队列句柄
+ * @param ms 超时时间(毫秒)，-1表示无超时
  */
-void msg_queue_set_get_msg_timeout_ms(msg_queue_handle h_queue, int ms);
+static inline void msg_queue_set_get_msg_timeout_ms(msg_queue_handle h_queue, int ms) {
+    if (h_queue) h_queue->i_get_msg_timeout_ms = ms;
+}
 
 /**
  * @brief 设置推送消息的默认超时时间
  * 对应 SetPushTimeoutMs
+ * @param h_queue 队列句柄
+ * @param ms 超时时间(毫秒)
  */
-void msg_queue_set_push_timeout_ms(msg_queue_handle h_queue, int ms);
+static inline void msg_queue_set_push_timeout_ms(msg_queue_handle h_queue, int ms) {
+    if (h_queue) h_queue->i_push_timeout_ms = ms;
+}
 
 /**
  * @brief 获取当前队列消息数量
+ * @param h_queue 队列句柄
+ * @return 队列中的消息数量
  */
-int msg_queue_size(msg_queue_handle h_queue);
+static inline int msg_queue_size(msg_queue_handle h_queue) {
+    if (h_queue == NULL) return 0;
+    return (int)uxQueueMessagesWaiting(h_queue->x_queue);
+}
 
 /**
  * @brief 辅助函数：创建超时消息

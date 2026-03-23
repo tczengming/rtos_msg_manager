@@ -20,6 +20,9 @@
 /** 消息队列名称最大长度 */
 #define MSG_MANAGER_NAME_MAX 32
 
+/** 消息管理器支持的最大队列数量 */
+#define MSG_MANAGER_MAX_ENTRIES 4
+
 /**
  * @brief 消息句柄结构体
  *
@@ -39,7 +42,7 @@ typedef struct msg_manager_entry
 {
     msg_queue_handle queue;      /**< 消息队列句柄 */
     msg_handle handle;           /**< 消息句柄 */
-    struct msg_manager_entry *next; /**< 链表下一项 */
+    bool is_used;                /**< 是否正在使用 */
 } msg_manager_entry;
 
 /**
@@ -49,8 +52,9 @@ typedef struct msg_manager_entry
  */
 typedef struct msg_manager
 {
-    msg_manager_entry *head;     /**< 队列链表头 */
-    SemaphoreHandle_t mutex;     /**< 保护并发访问的互斥锁 */
+    msg_manager_entry entries[MSG_MANAGER_MAX_ENTRIES]; /**< 静态条目数组 */
+    StaticSemaphore_t mutex_buffer;                      /**< 静态互斥锁缓冲区 */
+    SemaphoreHandle_t mutex;                             /**< 保护并发访问的互斥锁 */
 } msg_manager;
 
 /**

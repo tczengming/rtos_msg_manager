@@ -27,12 +27,29 @@ static msg_manager_entry *prv_find_entry(const char *name)
         return NULL;
     }
 
-    msg_manager_entry *itr = g_msg_manager.head;
-    while (itr != NULL) {
-        if (strncmp(itr->handle.name, name, MSG_MANAGER_NAME_MAX) == 0) {
-            return itr;
+    for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
+        if (g_msg_manager.entries[i].is_used &&
+            strncmp(g_msg_manager.entries[i].handle.name, name, MSG_MANAGER_NAME_MAX) == 0) {
+            return &g_msg_manager.entries[i];
         }
-        itr = itr->next;
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief 查找空闲的条目
+ *
+ * 在静态数组中查找一个未使用的条目
+ *
+ * @return 空闲条目指针，未找到返回NULL
+ */
+static msg_manager_entry *prv_find_free_entry(void)
+{
+    for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
+        if (!g_msg_manager.entries[i].is_used) {
+            return &g_msg_manager.entries[i];
+        }
     }
 
     return NULL;
@@ -46,11 +63,20 @@ static msg_manager_entry *prv_find_entry(const char *name)
 void msg_manager_init(void)
 {
     if (g_msg_manager.mutex == NULL) {
-        g_msg_manager.head = NULL;
-        g_msg_manager.mutex = xSemaphoreCreateMutex();
+        // 初始化所有条目为未使用状态
+        for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
+            g_msg_manager.entries[i].is_used = false;
+        }
+        // 创建静态互斥锁
+        g_msg_manager.mutex = xSemaphoreCreateMutexStatic(&g_msg_manager.mutex_buffer);
     }
 }
 
+/**
+ * @brief 反初始化消息管理器
+ *
+ * 销毁所有已注册的队列并释放资源
+ */
 void msg_manager_deinit(void)
 {
     if (g_msg_manager.mutex == NULL) {
@@ -59,23 +85,17 @@ void msg_manager_deinit(void)
 
     xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
 
-    msg_manager_entry *itr = g_msg_manager.head;
-    while (itr != NULL) {
-        msg_manager_entry *to_delete = itr;
-        itr = itr->next;
-
-        if (to_delete->queue != NULL) {
-            msg_queue_destroy(to_delete->queue);
+    // 销毁所有已注册的队列
+    for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
+        if (g_msg_manager.entries[i].is_used && g_msg_manager.entries[i].queue != NULL) {
+            msg_queue_destroy(g_msg_manager.entries[i].queue);
+            g_msg_manager.entries[i].is_used = false;
         }
-
-        vPortFree(to_delete);
     }
-
-    g_msg_manager.head = NULL;
 
     xSemaphoreGive(g_msg_manager.mutex);
 
-    vSemaphoreDelete(g_msg_manager.mutex);
+    // 注意：静态互斥锁不需要删除，只需要重置状态
     g_msg_manager.mutex = NULL;
 }
 
@@ -123,17 +143,16 @@ bool msg_manager_register(msg_queue_handle queue,
         return false;
     }
 
-    msg_manager_entry *entry = pvPortMalloc(sizeof(msg_manager_entry));
+    msg_manager_entry *entry = prv_find_free_entry();
     if (entry == NULL) {
         xSemaphoreGive(g_msg_manager.mutex);
         return false;
     }
 
     entry->queue = queue;
-    entry->next = g_msg_manager.head;
+    entry->is_used = true;
     strncpy(entry->handle.name, name, MSG_MANAGER_NAME_MAX - 1);
     entry->handle.name[MSG_MANAGER_NAME_MAX - 1] = '\0';
-    g_msg_manager.head = entry;
 
     msg_queue_set_callback(queue, callback);
     msg_queue_set_get_msg_timeout_ms(queue, empty_event_timeout_ms);
@@ -144,6 +163,13 @@ bool msg_manager_register(msg_queue_handle queue,
     return true;
 }
 
+/**
+ * @brief 通过名称注销消息队列
+ *
+ * 从管理器中移除指定名称的队列并销毁它
+ *
+ * @param name 要注销的队列名称
+ */
 void msg_manager_unregister_by_name(const char *name)
 {
     if ((name == NULL) || (name[0] == '\0') || (g_msg_manager.mutex == NULL)) {
@@ -152,24 +178,10 @@ void msg_manager_unregister_by_name(const char *name)
 
     xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
 
-    msg_manager_entry *prev = NULL;
-    msg_manager_entry *itr = g_msg_manager.head;
-
-    while (itr != NULL) {
-        if (strncmp(itr->handle.name, name, MSG_MANAGER_NAME_MAX) == 0) {
-            if (prev == NULL) {
-                g_msg_manager.head = itr->next;
-            } else {
-                prev->next = itr->next;
-            }
-
-            msg_queue_destroy(itr->queue);
-            vPortFree(itr);
-            break;
-        }
-
-        prev = itr;
-        itr = itr->next;
+    msg_manager_entry *entry = prv_find_entry(name);
+    if (entry != NULL) {
+        msg_queue_destroy(entry->queue);
+        entry->is_used = false;
     }
 
     xSemaphoreGive(g_msg_manager.mutex);

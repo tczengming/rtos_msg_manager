@@ -8,19 +8,7 @@
 // 内部结构定义
 // ============================================================================
 
-struct msg_queue_obj {
-    QueueHandle_t x_queue;             // FreeRTOS 队列，存储 msg_base*
-    TaskHandle_t x_task_handle;         // 后台处理任务
-    volatile bool b_stop;              // 停止标志
-    
-    // 配置参数
-    uint32_t ul_max_size;
-    int i_get_msg_timeout_ms;             // 接收超时 (生成 timeout_msg)
-    int i_push_timeout_ms;               // 发送默认超时
-    
-    // 回调
-    msg_callback pfn_callback;
-};
+// msg_queue_obj 结构体已在头文件中定义
 
 // ============================================================================
 // 辅助函数实现
@@ -122,8 +110,14 @@ msg_queue_handle msg_queue_create(uint32_t max_size) {
         return NULL;
     }
 
-    // 创建队列，元素大小为指针大小
-    p_obj->x_queue = xQueueCreate(max_size, sizeof(msg_base*));
+    // 限制最大大小以适应静态缓冲区
+    if (max_size > 20) {
+        max_size = 20;
+    }
+
+    // 创建静态队列
+    p_obj->x_queue = xQueueCreateStatic(max_size, sizeof(msg_base*),
+                                       p_obj->queue_storage, &p_obj->x_queue_buffer);
     if (p_obj->x_queue == NULL) {
         vPortFree(p_obj);
         return NULL;
@@ -146,26 +140,23 @@ void msg_queue_destroy(msg_queue_handle h_queue) {
     h_queue->b_stop = true;
 
     // 2. 唤醒阻塞在 xQueueReceive 的任务
-    // 发送一个空指针或者任意消息让它醒来检查 bStop
     msg_base* dummy = NULL;
     xQueueSend(h_queue->x_queue, &dummy, 0);
 
-    // 等待一小段时间让任务退出 (可选，取决于系统是否允许阻塞在销毁中)
-    // 如果任务优先级低，可能需要更长时间，或者直接 vTaskDelete 强制杀
-    // 这里假设任务能迅速响应 bStop
+    // 等待一小段时间让任务退出
     int wait_count = 0;
     while (h_queue->x_task_handle != NULL && wait_count < 100) {
         vTaskDelay(pdMS_TO_TICKS(1));
         wait_count++;
     }
-    
-    // 如果任务还没退出的极端情况，强制删除 (慎用，但在销毁场景可接受)
+
+    // 如果任务还没退出的极端情况，强制删除
     if (h_queue->x_task_handle != NULL) {
         vTaskDelete(h_queue->x_task_handle);
         h_queue->x_task_handle = NULL;
     }
 
-    // 3. 清理队列中剩余的消息 (对应 C++ 析构中的遍历销毁)
+    // 3. 清理队列中剩余的消息
     msg_base* px_msg;
     while (xQueueReceive(h_queue->x_queue, &px_msg, 0) == pdTRUE) {
         if (px_msg != NULL && px_msg->destroy != NULL) {
@@ -173,26 +164,23 @@ void msg_queue_destroy(msg_queue_handle h_queue) {
         }
     }
 
-    // 4. 删除 FreeRTOS 对象
-    vQueueDelete(h_queue->x_queue);
+    // 4. 静态对象不需要删除，只需要释放结构体内存
     vPortFree(h_queue);
 }
 
 void msg_queue_start(msg_queue_handle h_queue) {
     if (h_queue == NULL || h_queue->x_task_handle != NULL) return;
 
-    // 创建任务
-    // 栈大小需要根据 msg_base 派生类的大小和调用栈深度调整
-    // 优先级设为比普通空闲任务高，但可根据需求调整
-    BaseType_t ret = xTaskCreate(prv_msg_queue_task, 
-                                 "MsgQ_Task", 
-                                 configMINIMAL_STACK_SIZE * 4, 
-                                 (void*)h_queue, 
-                                 tskIDLE_PRIORITY + 2, 
-                                 &h_queue->x_task_handle);
-    
-    if (ret != pdPASS) {
-        h_queue->x_task_handle = NULL;
+    // 创建静态任务
+    h_queue->x_task_handle = xTaskCreateStatic(prv_msg_queue_task,
+                                             "MsgQ_Task",
+                                             configMINIMAL_STACK_SIZE * 4,
+                                             (void*)h_queue,
+                                             tskIDLE_PRIORITY + 2,
+                                             h_queue->task_stack,
+                                             &h_queue->x_task_buffer);
+
+    if (h_queue->x_task_handle == NULL) {
         // 错误处理
     }
 }
@@ -265,21 +253,4 @@ msg_queue_code msg_queue_pop(msg_queue_handle h_queue, msg_base** out_msg, pop_t
     } else {
         return MSG_QUEUE_CODE_EMPTY;
     }
-}
-
-void msg_queue_set_callback(msg_queue_handle h_queue, msg_callback cb) {
-    if (h_queue) h_queue->pfn_callback = cb;
-}
-
-void msg_queue_set_get_msg_timeout_ms(msg_queue_handle h_queue, int ms) {
-    if (h_queue) h_queue->i_get_msg_timeout_ms = ms;
-}
-
-void msg_queue_set_push_timeout_ms(msg_queue_handle h_queue, int ms) {
-    if (h_queue) h_queue->i_push_timeout_ms = ms;
-}
-
-int msg_queue_size(msg_queue_handle h_queue) {
-    if (h_queue == NULL) return 0;
-    return (int)uxQueueMessagesWaiting(h_queue->x_queue);
 }
