@@ -141,7 +141,7 @@ void prv_demo_task(void *pv_parameters) {
         counter++;
         
         if (counter >= 3) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
+            os_task_delay(os_ms_to_ticks(5000));
             os_log("发送完3组消息后退出");
             break;
         }
@@ -153,7 +153,7 @@ void prv_demo_task(void *pv_parameters) {
     // 任务结束
     msg_manager_unregister_by_id(MSG_QUEUE_ID_NORMAL);
     msg_manager_unregister_by_id(MSG_QUEUE_ID_BLOCKING);
-    vTaskDelete(NULL);
+    os_task_delete(NULL);
 }
 
 // 初始化消息演示
@@ -162,5 +162,5 @@ void msg_demo_init(void) {
     msg_manager_init();
     
     // 创建演示任务
-    os_task_create("DemoTask", prv_demo_task, NULL, configMINIMAL_STACK_SIZE * 2, OS_TASK_PRIORITY_NORMAL);
+    os_task_create("DemoTask", prv_demo_task, NULL, OS_MINIMAL_STACK_SIZE * 2, OS_TASK_PRIORITY_NORMAL);
 }

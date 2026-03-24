@@ -25,6 +25,9 @@ typedef SemaphoreHandle_t os_semaphore_handle;
 typedef TimerHandle_t os_timer_handle;
 typedef QueueHandle_t os_queue_handle;
 typedef TickType_t os_tick_t;
+typedef StackType_t os_stack_t
+typedef StaticTask_t os_static_task_t;
+typedef StaticQueue_t os_static_queue_t;
 typedef void (*os_task_func)(void *);
 typedef TimerCallbackFunction_t os_timer_func;
 
@@ -36,6 +39,9 @@ typedef enum {
     OS_TASK_PRIORITY_HIGH,
     OS_TASK_PRIORITY_MAX
 } os_task_priority_t;
+
+// 任务栈大小
+#define OS_MINIMAL_STACK_SIZE configMINIMAL_STACK_SIZE
 
 // 超时时间
 typedef enum {

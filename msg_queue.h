@@ -76,10 +76,10 @@ typedef struct msg_queue_obj {
     msg_callback pfn_callback;                 /**< 消息处理回调函数 */
 
     // 静态缓冲区
-    StaticQueue_t x_queue_buffer;             /**< 静态队列缓冲区 */
+    os_static_queue_t x_queue_buffer;             /**< 静态队列缓冲区 */
     uint8_t queue_storage[sizeof(msg_base*) * MSG_QUEUE_STORAGE_SIZE]; /**< 队列存储空间 */
-    StaticTask_t x_task_buffer;               /**< 静态任务缓冲区 */
-    StackType_t task_stack[configMINIMAL_STACK_SIZE * 4]; /**< 任务栈空间 */
+    os_static_task_t x_task_buffer;               /**< 静态任务缓冲区 */
+    os_stack_t task_stack[OS_MINIMAL_STACK_SIZE * 4]; /**< 任务栈空间 */
 } msg_queue_obj;
 
 typedef msg_queue_obj* msg_queue_handle;
