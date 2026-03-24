@@ -13,7 +13,6 @@ extern "C" {
 #endif
 
 // 常量定义
-#define MSG_QUEUE_NAME_MAX_LEN 8
 #define MSG_QUEUE_STORAGE_SIZE 20
 #define MSG_QUEUE_ITEM_SIZE sizeof(msg_base*)
 #define MSG_QUEUE_MAX_ITEMS MSG_QUEUE_STORAGE_SIZE
@@ -29,8 +28,10 @@ typedef enum {
 typedef struct msg_base {
     // 虚析构函数模拟
     void (*destroy)(struct msg_base* self);
-    // 添加类型 ID 用于运行时识别和目标队列ID
+    // 消息类型 ID
     uint8_t type_id;
+    // 目标队列 ID
+    uint8_t target_queue_id;
 } msg_base;
 
 // 对应 TimeoutMsg

@@ -29,6 +29,16 @@
 /** 消息分发器任务优先级 */
 #define MSG_DISPATCHER_PRIORITY (tskIDLE_PRIORITY + 1)
 
+/** 回调超时机制配置 */
+/* 定义此宏启用回调超时机制，防止回调函数阻塞消息处理 */
+//#define ENABLE_CALLBACK_TIMEOUT
+
+/** 回调超时时间（毫秒） */
+#define CALLBACK_TIMEOUT_MS 1000
+
+/** 定义此宏启用真正中断阻塞回调的功能 */
+//#define ENABLE_CALLBACK_INTERRUPT
+
 /**
  * @brief 消息句柄结构体
  *
