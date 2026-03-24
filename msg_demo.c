@@ -19,9 +19,8 @@ typedef struct my_data_msg {
 // 2. 实现 destroy 函数
 void my_data_msg_destroy(msg_base* self) {
     my_data_msg* p = (my_data_msg*)self;
-    // 如果里面有动态分配的字符串等，在这里 free
-    // 注意：对于消息池分配的消息，不需要调用 vPortFree
-    // 消息池会自动处理内存管理
+    // 如果消息里面有额外的指针动态分配了内存，要在这里 free
+    // 否则这里不要free,消息池会自动处理内存管理
 }
 
 // 3. 工厂函数 (替代 new/make_unique)
@@ -59,7 +58,8 @@ void prv_demo_task(void *pv_parameters) {
     (void)pv_parameters;
 
     // 单队列优化：不再需要创建独立队列
-    if (!msg_manager_register("HTTPClient", my_process_callback, -1)) {
+    msg_handle* handle = msg_manager_register(my_process_callback, -1);
+    if (handle == NULL) {
         printf("Failed to register message queue\n");
         return;
     }
@@ -70,7 +70,7 @@ void prv_demo_task(void *pv_parameters) {
         my_data_msg* msg = my_data_msg_create(3, 20.0 + counter);
         if (msg) {
             printf("DemoTask: Sending message %d\n", counter + 1);
-            msg_queue_code result = msg_manager_send_msg_to("HTTPClient", (msg_base*)msg);
+            msg_queue_code result = msg_manager_send_msg_to(handle, (msg_base*)msg);
             if (result != MSG_QUEUE_CODE_OK) {
                 printf("Failed to send message, error code: %d\n", result);
                 msg_manager_free_msg((msg_base*)msg);
@@ -91,7 +91,7 @@ void prv_demo_task(void *pv_parameters) {
     }
     
     // 任务结束
-    msg_manager_unregister_by_name("HTTPClient");
+    msg_manager_unregister_by_handle(handle);
     vTaskDelete(NULL);
 }
 

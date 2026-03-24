@@ -29,10 +29,8 @@ typedef enum {
 typedef struct msg_base {
     // 虚析构函数模拟
     void (*destroy)(struct msg_base* self);
-    // 添加类型 ID 用于运行时识别
+    // 添加类型 ID 用于运行时识别和目标队列ID
     uint8_t type_id;
-    // 单队列优化：添加目标名称用于路由
-    char target_name[MSG_QUEUE_NAME_MAX_LEN];
 } msg_base;
 
 // 对应 TimeoutMsg

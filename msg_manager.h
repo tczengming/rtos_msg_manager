@@ -17,9 +17,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-/** 消息队列名称最大长度 */
-#define MSG_MANAGER_NAME_MAX_LEN MSG_QUEUE_NAME_MAX_LEN
-
 /** 消息管理器支持的最大队列数量 */
 #define MSG_MANAGER_MAX_ENTRIES 2
 
@@ -40,7 +37,6 @@
 typedef struct msg_handle
 {
     uint8_t id;                        /**< 队列唯一标识 */
-    char name[MSG_MANAGER_NAME_MAX_LEN]; /**< 队列名称 */
 } msg_handle;
 
 /**
@@ -91,17 +87,15 @@ void msg_manager_deinit(void);
  *
  * 将消息队列注册到管理器中（单队列优化：只保存回调映射）
  *
- * @param name 队列名称，用于后续查找
  * @param callback 消息处理回调函数
  * @param empty_event_timeout_ms 队列空事件超时时间(毫秒)，-1表示无超时
- * @return 注册成功返回true，失败返回false
+ * @return 注册成功返回句柄，失败返回NULL
  */
-bool msg_manager_register(const char *name,
-                         msg_callback callback,
-                         int16_t empty_event_timeout_ms);
+msg_handle* msg_manager_register(msg_callback callback,
+                                int16_t empty_event_timeout_ms);
 
 /**
- * @brief 通过名称注销消息队列
+ * @brief 通过名称注销消息队列（保留接口，实际使用id）
  *
  * 从管理器中移除指定名称的队列并销毁它
  *
@@ -147,23 +141,23 @@ void msg_manager_free_msg(msg_base* msg);
  *
  * 向指定接收者发送消息（单队列优化）
  *
- * @param to 接收者队列名称
+ * @param to 接收者队列句柄
  * @param msg 要发送的消息
  * @return 发送结果状态码
  */
-msg_queue_code msg_manager_send_msg(const char *to,
+msg_queue_code msg_manager_send_msg(msg_handle *to,
                                 msg_base *msg);
 
 /**
  * @brief 发送消息到指定队列（简化版）
  *
- * 向指定接收者发送消息，不指定发送者
+ * 向指定接收者发送消息
  *
- * @param to 接收者队列名称
+ * @param to 接收者队列句柄
  * @param msg 要发送的消息
  * @return 发送结果状态码
  */
-msg_queue_code msg_manager_send_msg_to(const char *to, msg_base *msg);
+msg_queue_code msg_manager_send_msg_to(msg_handle *to, msg_base *msg);
 
 /**
  * @brief 获取队列大小
@@ -177,11 +171,32 @@ int msg_manager_size(void);
 /**
  * @brief 检查消息句柄是否有效
  *
- * 验证消息句柄是否有效（非空且名称不为空）
+ * 验证消息句柄是否有效（非空且id不为0）
  *
  * @param handle 要检查的句柄
  * @return 有效返回true，无效返回false
  */
 bool msg_handle_is_valid(const msg_handle *handle);
+
+/**
+ * @brief 清除全局队列中的所有消息
+ *
+ * 清除全局队列中的所有消息，并释放消息内存
+ */
+void msg_manager_clear_all_messages(void);
+
+/**
+ * @brief 清除指定类型的消息
+ *
+ * @param type_id 消息类型ID
+ */
+void msg_manager_clear_messages_by_type(uint8_t type_id);
+
+/**
+ * @brief 清除发送到指定队列的消息
+ *
+ * @param handle 目标队列句柄
+ */
+void msg_manager_clear_messages_by_queue(msg_handle *handle);
 
 #endif /* MSG_MANAGER_H */

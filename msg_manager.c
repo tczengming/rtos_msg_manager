@@ -26,35 +26,19 @@ static StaticSemaphore_t msg_pool_mutex_buffer;
 static SemaphoreHandle_t msg_pool_mutex = NULL;
 
 /**
- * @brief 查找指定名称的队列条目
+ * @brief 查找指定id的队列条目
  *
- * 在管理器中搜索指定名称的队列条目
+ * 在管理器中搜索指定id的队列条目
  *
- * @param name 要查找的队列名称
+ * @param id 要查找的队列id
  * @return 找到的条目指针，未找到返回NULL
  */
-static msg_manager_entry *prv_find_entry(const char *name)
+static msg_manager_entry *prv_find_entry_by_id(uint8_t id)
 {
-    if ((name == NULL) || (name[0] == '\0')) {
+    if (id == 0) {
         return NULL;
     }
 
-    // 减少互斥锁范围：只在查找时获取锁
-    xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
-    msg_manager_entry *entry = NULL;
-    for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
-        if (g_msg_manager.entries[i].is_used &&
-            strncmp(g_msg_manager.entries[i].handle.name, name, MSG_MANAGER_NAME_MAX_LEN) == 0) {
-            entry = &g_msg_manager.entries[i];
-            break;
-        }
-    }
-    xSemaphoreGive(g_msg_manager.mutex);
-    return entry;
-}
-
-static msg_manager_entry *prv_find_entry_by_id(uint8_t id)
-{
     xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
     msg_manager_entry *entry = NULL;
     for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
@@ -67,6 +51,7 @@ static msg_manager_entry *prv_find_entry_by_id(uint8_t id)
     xSemaphoreGive(g_msg_manager.mutex);
     return entry;
 }
+
 
 /**
  * @brief 查找空闲的条目
@@ -105,8 +90,8 @@ static void prv_message_dispatcher(void *pvParameters)
     for (;;) {
         // 从全局队列接收消息
         if (msg_queue_pop(g_msg_manager.global_queue, &msg, POP_BLOCK) == MSG_QUEUE_CODE_OK) {
-            // 根据target_name查找对应的回调函数
-            msg_manager_entry *entry = prv_find_entry(msg->target_name);
+            // 根据type_id查找对应的回调函数（type_id存储目标队列ID）
+            msg_manager_entry *entry = prv_find_entry_by_id(msg->type_id);
             if (entry != NULL && entry->callback != NULL) {
                 // 调用回调函数处理消息
                 entry->callback(msg);
@@ -114,6 +99,8 @@ static void prv_message_dispatcher(void *pvParameters)
                 // 未找到对应条目，销毁消息
                 if (msg->destroy != NULL) {
                     msg->destroy(msg);
+                } else {
+                    msg_manager_free_msg(msg);
                 }
             }
         }
@@ -207,14 +194,14 @@ void msg_manager_deinit(void)
 /**
  * @brief 检查消息句柄是否有效
  *
- * 验证消息句柄是否有效（非空且名称不为空）
+ * 验证消息句柄是否有效（非空且id不为0）
  *
  * @param handle 要检查的句柄
  * @return 有效返回true，无效返回false
  */
 bool msg_handle_is_valid(const msg_handle *handle)
 {
-    return (handle != NULL) && (handle->name[0] != '\0');
+    return (handle != NULL) && (handle->id != 0);
 }
 
 /**
@@ -222,33 +209,25 @@ bool msg_handle_is_valid(const msg_handle *handle)
  *
  * 将消息队列注册到管理器中（单队列优化：只保存回调映射）
  *
- * @param queue 不再使用，传NULL即可
- * @param name 队列名称，用于后续查找
  * @param callback 消息处理回调函数
  * @param empty_event_timeout_ms 队列空事件超时时间(毫秒)，-1表示无超时
- * @return 注册成功返回true，失败返回false
+ * @return 注册成功返回句柄，失败返回NULL
  */
-bool msg_manager_register(const char *name,
-                        msg_callback callback,
-                        int16_t empty_event_timeout_ms)
+msg_handle* msg_manager_register(msg_callback callback,
+                                int16_t empty_event_timeout_ms)
 {
-    if ((name == NULL) || (name[0] == '\0') || (callback == NULL)) {
-        return false;
+    if (callback == NULL) {
+        return NULL;
     }
 
     if (g_msg_manager.mutex == NULL) {
         msg_manager_init();
     }
 
-    // 检查队列名称是否已存在
-    if (prv_find_entry(name) != NULL) {
-        return false;
-    }
-
     // 查找空闲条目
     msg_manager_entry *free_entry = prv_find_free_entry();
     if (free_entry == NULL) {
-        return false;
+        return NULL;
     }
 
     // 分配队列ID并注册
@@ -257,14 +236,12 @@ bool msg_manager_register(const char *name,
     free_entry->callback = callback;
     free_entry->timeout_ms = empty_event_timeout_ms;
     free_entry->handle.id = g_msg_manager.next_queue_id++;
-    strncpy(free_entry->handle.name, name, MSG_MANAGER_NAME_MAX_LEN - 1);
-    free_entry->handle.name[MSG_MANAGER_NAME_MAX_LEN - 1] = '\0';
     xSemaphoreGive(g_msg_manager.mutex);
-    return true;
+    return &free_entry->handle;
 }
 
 /**
- * @brief 通过名称注销消息队列
+ * @brief 通过名称注销消息队列（保留接口）
  *
  * 从管理器中移除指定名称的队列（单队列优化：只清除回调映射）
  *
@@ -272,11 +249,24 @@ bool msg_manager_register(const char *name,
  */
 void msg_manager_unregister_by_name(const char *name)
 {
-    if ((name == NULL) || (name[0] == '\0') || (g_msg_manager.mutex == NULL)) {
+    // 由于不再使用name，此函数不做任何操作
+    (void)name;
+}
+
+/**
+ * @brief 通过句柄注销消息队列
+ *
+ * 从管理器中移除指定句柄的队列（单队列优化：只清除回调映射）
+ *
+ * @param handle 要注销的队列句柄
+ */
+void msg_manager_unregister_by_handle(const msg_handle *handle)
+{
+    if (handle == NULL || g_msg_manager.mutex == NULL) {
         return;
     }
 
-    msg_manager_entry *found_entry = prv_find_entry(name);
+    msg_manager_entry *found_entry = prv_find_entry_by_id(handle->id);
     if (found_entry != NULL) {
         xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
         // 清除回调，标记为未使用
@@ -301,40 +291,29 @@ void msg_manager_unregister_by_id(uint8_t id)
     }
 }
 
-void msg_manager_unregister_by_handle(const msg_handle *handle)
-{
-    if ((handle == NULL) || (handle->name[0] == '\0')) {
-        return;
-    }
-
-    msg_manager_unregister_by_name(handle->name);
-}
-
 /**
  * @brief 发送消息到指定队列
  *
  * 向指定接收者发送消息（单队列优化）
  *
- * @param from 发送者名称，可为NULL
- * @param to 接收者队列名称
+ * @param to 接收者队列句柄
  * @param msg 要发送的消息
  * @return 发送结果状态码
  */
-msg_queue_code msg_manager_send_msg(const char *to,
+msg_queue_code msg_manager_send_msg(msg_handle *to,
                                 msg_base *msg)
 {
-    if ((to == NULL) || (to[0] == '\0') || (msg == NULL) || (g_msg_manager.global_queue == NULL)) {
+    if (to == NULL || msg == NULL || g_msg_manager.global_queue == NULL) {
         return MSG_QUEUE_CODE_NOT_EXISTS;
     }
 
     // 检查目标队列是否存在
-    if (prv_find_entry(to) == NULL) {
+    if (prv_find_entry_by_id(to->id) == NULL) {
         return MSG_QUEUE_CODE_NOT_EXISTS;
     }
 
-    // 设置消息的目标名称
-    strncpy(msg->target_name, to, MSG_MANAGER_NAME_MAX_LEN - 1);
-    msg->target_name[MSG_MANAGER_NAME_MAX_LEN - 1] = '\0';
+    // 设置消息的目标ID（使用type_id字段存储目标ID）
+    msg->type_id = to->id;
 
     // 发送到全局队列
     return msg_queue_push(g_msg_manager.global_queue, msg);
@@ -410,11 +389,11 @@ void msg_manager_free_msg(msg_base* msg)
  *
  * 向指定接收者发送消息（单队列优化）
  *
- * @param to 接收者队列名称
+ * @param to 接收者队列句柄
  * @param msg 要发送的消息
  * @return 发送结果状态码
  */
-msg_queue_code msg_manager_send_msg_to(const char *to, msg_base *msg)
+msg_queue_code msg_manager_send_msg_to(msg_handle *to, msg_base *msg)
 {
     return msg_manager_send_msg(to, msg);
 }
@@ -434,4 +413,91 @@ int msg_manager_size(void)
     }
 
     return msg_queue_size(g_msg_manager.global_queue);
+}
+
+/**
+ * @brief 清除全局队列中的所有消息
+ *
+ * 清除全局队列中的所有消息，并释放消息内存
+ */
+void msg_manager_clear_all_messages(void)
+{
+    if (g_msg_manager.global_queue == NULL) {
+        return;
+    }
+
+    msg_base *msg;
+    while (msg_queue_pop(g_msg_manager.global_queue, &msg, POP_NONE_BLOCK) == MSG_QUEUE_CODE_OK) {
+        msg_manager_free_msg(msg);
+    }
+}
+
+/**
+ * @brief 清除指定类型的消息
+ *
+ * @param type_id 消息类型ID
+ */
+void msg_manager_clear_messages_by_type(uint8_t type_id)
+{
+    if (g_msg_manager.global_queue == NULL) {
+        return;
+    }
+
+    // 临时队列用于存储非目标类型的消息
+    msg_queue_handle temp_queue = msg_queue_create(MSG_QUEUE_MAX_ITEMS);
+    if (temp_queue == NULL) {
+        return;
+    }
+
+    // 分离消息
+    msg_base *msg;
+    while (msg_queue_pop(g_msg_manager.global_queue, &msg, POP_NONE_BLOCK) == MSG_QUEUE_CODE_OK) {
+        if (msg->type_id == type_id) {
+            msg_manager_free_msg(msg);
+        } else {
+            msg_queue_push(temp_queue, msg);
+        }
+    }
+
+    // 将非目标类型消息放回原队列
+    while (msg_queue_pop(temp_queue, &msg, POP_NONE_BLOCK) == MSG_QUEUE_CODE_OK) {
+        msg_queue_push(g_msg_manager.global_queue, msg);
+    }
+
+    msg_queue_destroy(temp_queue);
+}
+
+/**
+ * @brief 清除发送到指定队列的消息
+ *
+ * @param handle 目标队列句柄
+ */
+void msg_manager_clear_messages_by_queue(msg_handle *handle)
+{
+    if (g_msg_manager.global_queue == NULL || handle == NULL) {
+        return;
+    }
+
+    // 临时队列用于存储非目标队列的消息
+    msg_queue_handle temp_queue = msg_queue_create(MSG_QUEUE_MAX_ITEMS);
+    if (temp_queue == NULL) {
+        return;
+    }
+
+    // 分离消息
+    msg_base *msg;
+    while (msg_queue_pop(g_msg_manager.global_queue, &msg, POP_NONE_BLOCK) == MSG_QUEUE_CODE_OK) {
+        if (msg->type_id == handle->id) {
+            msg_manager_free_msg(msg);
+        } else {
+            msg_queue_push(temp_queue, msg);
+        }
+    }
+
+    // 将非目标队列消息放回原队列
+    while (msg_queue_pop(temp_queue, &msg, POP_NONE_BLOCK) == MSG_QUEUE_CODE_OK) {
+        msg_queue_push(g_msg_manager.global_queue, msg);
+    }
+
+    msg_queue_destroy(temp_queue);
 }
