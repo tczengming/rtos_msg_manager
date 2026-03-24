@@ -121,12 +121,56 @@ msg_handle* normal_handle = msg_manager_register(my_process_callback, -1);
 
 ### 4.4 Send Message
 
+#### Send Message by Handle
+
 ```c
 // Create message
 my_data_msg* msg = my_data_msg_create(1, 10.0);
 
 // Send message
 msg_queue_code result = msg_manager_send_msg_to(normal_handle, (msg_base*)msg);
+if (result != MSG_QUEUE_CODE_OK) {
+    os_log("Failed to send message, error code: %d", result);
+    msg_manager_free_msg((msg_base*)msg);
+}
+```
+
+#### Send Message by Queue ID
+
+```c
+// Get queue ID
+uint8_t queue_id = normal_handle->id;
+
+// Create message
+my_data_msg* msg = my_data_msg_create(1, 10.0);
+
+// Send message by ID
+msg_queue_code result = msg_manager_send_msg_to_id(queue_id, (msg_base*)msg);
+if (result != MSG_QUEUE_CODE_OK) {
+    os_log("Failed to send message, error code: %d", result);
+    msg_manager_free_msg((msg_base*)msg);
+}
+```
+
+#### Use Enum to Identify Queue ID
+
+```c
+// 1. Queue ID enum definition (already defined in msg_manager.h)
+/*
+typedef enum {
+    MSG_QUEUE_ID_NORMAL = 1,    // Normal message queue ID
+    MSG_QUEUE_ID_BLOCKING,       // Blocking message queue ID
+    MSG_QUEUE_ID_MAX             // Max queue ID, used for boundary checking
+} msg_queue_id_t;
+*/
+
+// 2. Register queue with specified ID
+msg_handle* normal_handle = msg_manager_register_with_id(MSG_QUEUE_ID_NORMAL, my_process_callback, -1);
+msg_handle* blocking_handle = msg_manager_register_with_id(MSG_QUEUE_ID_BLOCKING, my_blocking_callback, -1);
+
+// 3. Send message using enum value directly in other tasks
+my_data_msg* msg = my_data_msg_create(1, 10.0);
+msg_queue_code result = msg_manager_send_msg_to_id(MSG_QUEUE_ID_NORMAL, (msg_base*)msg);
 if (result != MSG_QUEUE_CODE_OK) {
     os_log("Failed to send message, error code: %d", result);
     msg_manager_free_msg((msg_base*)msg);
@@ -216,8 +260,8 @@ void os_free(void* ptr) {
   - Queue buffer: About 256 bytes (MSG_QUEUE_MAX_ITEMS=20, 4 bytes per message pointer)
   - **Task stack**: Not included (configured by user)
 
-- **ROM Usage**: About 3.5 KB
-  - msg_manager.c: About 2.5 KB
+- **ROM Usage**: About 3.7 KB
+  - msg_manager.c: About 2.7 KB (including the new msg_manager_send_msg_to_id and msg_manager_register_with_id functions)
   - msg_queue.c: About 1 KB
   - Does not include code from other files like main.c
 

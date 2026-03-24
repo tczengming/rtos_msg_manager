@@ -28,6 +28,13 @@
 /** 消息分发器任务优先级 */
 #define MSG_DISPATCHER_PRIORITY (tskIDLE_PRIORITY + 1)
 
+/** 队列ID枚举定义 */
+typedef enum {
+    MSG_QUEUE_ID_NORMAL = 1,    /**< 正常消息队列ID */
+    MSG_QUEUE_ID_BLOCKING,       /**< 阻塞消息队列ID */
+    MSG_QUEUE_ID_MAX             /**< 最大队列ID，用于边界检查 */
+} msg_queue_id_t;
+
 /** 回调超时机制配置 */
 /* 定义此宏启用回调超时机制，防止回调函数阻塞消息处理 */
 //#define ENABLE_CALLBACK_TIMEOUT
@@ -104,6 +111,19 @@ msg_handle* msg_manager_register(msg_callback callback,
                                 int16_t empty_event_timeout_ms);
 
 /**
+ * @brief 使用指定ID注册消息队列
+ *
+ * 使用指定的队列ID注册消息队列
+ *
+ * @param queue_id 队列ID（使用msg_queue_id_t枚举值）
+ * @param callback 消息处理回调函数
+ * @param empty_event_timeout_ms 队列空事件超时时间(毫秒)，-1表示无超时
+ * @return 注册成功返回句柄，失败返回NULL
+ */
+msg_handle* msg_manager_register_with_id(uint8_t queue_id, msg_callback callback,
+                                        int16_t empty_event_timeout_ms);
+
+/**
  * @brief 通过名称注销消息队列（保留接口，实际使用id）
  *
  * 从管理器中移除指定名称的队列并销毁它
@@ -167,6 +187,17 @@ msg_queue_code msg_manager_send_msg(msg_handle *to,
  * @return 发送结果状态码
  */
 msg_queue_code msg_manager_send_msg_to(msg_handle *to, msg_base *msg);
+
+/**
+ * @brief 通过队列ID发送消息
+ *
+ * 向指定队列ID的接收者发送消息
+ *
+ * @param queue_id 接收者队列ID
+ * @param msg 要发送的消息
+ * @return 发送结果状态码
+ */
+msg_queue_code msg_manager_send_msg_to_id(uint8_t queue_id, msg_base *msg);
 
 /**
  * @brief 获取队列大小

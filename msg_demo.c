@@ -41,12 +41,12 @@ void my_process_callback(msg_base* msg) {
 
     if (msg->type_id == MSG_TYPE_TIMEOUT) {
         timeout_msg* t_msg = (timeout_msg*)msg;
-        os_log("System: Receive Timeout Event (%d ms)\n", t_msg->timeout_ms);
+        os_log("System: Receive Timeout Event (%d ms)", t_msg->timeout_ms);
     } else if (msg->type_id == MSG_TYPE_DATA) {
         my_data_msg* d_msg = (my_data_msg*)msg;
-        os_log("Data: Sensor %d, Value %.2f\n", d_msg->sensor_id, d_msg->value);
+        os_log("Data: Sensor %d, Value %.2f", d_msg->sensor_id, d_msg->value);
     } else {
-        os_log("Unknown message type: %d\n", msg->type_id);
+        os_log("Unknown message type: %d", msg->type_id);
     }
     
     // 释放消息
@@ -59,12 +59,12 @@ void my_blocking_callback(msg_base* msg) {
 
     if (msg->type_id == MSG_TYPE_DATA) {
         my_data_msg* d_msg = (my_data_msg*)msg;
-        os_log("Blocking callback: Sensor %d, Value %.2f\n", d_msg->sensor_id, d_msg->value);
+        os_log("Blocking callback: Sensor %d, Value %.2f", d_msg->sensor_id, d_msg->value);
         
         // 故意阻塞2秒，超过1秒的超时时间
-        os_log("Blocking callback: Starting to block...\n");
+        os_log("Blocking callback: Starting to block...");
         os_task_delay(os_ms_to_ticks(2000));
-        os_log("Blocking callback: Blocking completed\n");
+        os_log("Blocking callback: Blocking completed");
     }
     
     // 释放消息
@@ -75,17 +75,18 @@ void my_blocking_callback(msg_base* msg) {
 void prv_demo_task(void *pv_parameters) {
     (void)pv_parameters;
 
-    msg_handle* normal_handle = msg_manager_register(my_process_callback, -1);
+    // 使用指定的队列ID注册队列
+    msg_handle* normal_handle = msg_manager_register_with_id(MSG_QUEUE_ID_NORMAL, my_process_callback, -1);
     if (normal_handle == NULL) {
-        os_log("Failed to register normal message queue\n");
+        os_log("Failed to register normal message queue");
         return;
     }
 
     // 注册一个使用阻塞回调的队列（用于测试超时机制）
-    msg_handle* blocking_handle = msg_manager_register(my_blocking_callback, -1);
+    msg_handle* blocking_handle = msg_manager_register_with_id(MSG_QUEUE_ID_BLOCKING, my_blocking_callback, -1);
     if (blocking_handle == NULL) {
-        os_log("Failed to register blocking message queue\n");
-        msg_manager_unregister_by_handle(normal_handle);
+        os_log("Failed to register blocking message queue");
+        msg_manager_unregister_by_id(MSG_QUEUE_ID_NORMAL);
         return;
     }
 
@@ -95,34 +96,34 @@ void prv_demo_task(void *pv_parameters) {
         // 发送正常消息
         my_data_msg* normal_msg = my_data_msg_create(1, 10.0 + counter);
         if (normal_msg) {
-            os_log("DemoTask: Sending normal message %d\n", counter + 1);
-            msg_queue_code normal_result = msg_manager_send_msg_to(normal_handle, (msg_base*)normal_msg);
+            os_log("DemoTask: Sending normal message %d", counter + 1);
+            msg_queue_code normal_result = msg_manager_send_msg_to_id(MSG_QUEUE_ID_NORMAL, (msg_base*)normal_msg);
             if (normal_result != MSG_QUEUE_CODE_OK) {
-                os_log("Failed to send normal message, error code: %d\n", normal_result);
+                os_log("Failed to send normal message, error code: %d", normal_result);
                 msg_manager_free_msg((msg_base*)normal_msg);
             }
         } else {
-            os_log("Failed to allocate normal message\n");
+            os_log("Failed to allocate normal message");
         }
 
         // 发送阻塞消息（测试超时机制）
         my_data_msg* blocking_msg = my_data_msg_create(2, 20.0 + counter);
         if (blocking_msg) {
-            os_log("DemoTask: Sending blocking message %d\n", counter + 1);
-            msg_queue_code blocking_result = msg_manager_send_msg_to(blocking_handle, (msg_base*)blocking_msg);
+            os_log("DemoTask: Sending blocking message %d", counter + 1);
+            msg_queue_code blocking_result = msg_manager_send_msg_to_id(MSG_QUEUE_ID_BLOCKING, (msg_base*)blocking_msg);
             if (blocking_result != MSG_QUEUE_CODE_OK) {
-                os_log("Failed to send blocking message, error code: %d\n", blocking_result);
+                os_log("Failed to send blocking message, error code: %d", blocking_result);
                 msg_manager_free_msg((msg_base*)blocking_msg);
             }
         } else {
-            os_log("Failed to allocate blocking message\n");
+            os_log("Failed to allocate blocking message");
         }
 
         counter++;
         
         if (counter >= 3) {
             vTaskDelay(pdMS_TO_TICKS(5000));
-            os_log("发送完3组消息后退出\n");
+            os_log("发送完3组消息后退出");
             break;
         }
 
@@ -131,8 +132,8 @@ void prv_demo_task(void *pv_parameters) {
     }
     
     // 任务结束
-    msg_manager_unregister_by_handle(normal_handle);
-    msg_manager_unregister_by_handle(blocking_handle);
+    msg_manager_unregister_by_id(MSG_QUEUE_ID_NORMAL);
+    msg_manager_unregister_by_id(MSG_QUEUE_ID_BLOCKING);
     vTaskDelete(NULL);
 }
 

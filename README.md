@@ -121,12 +121,56 @@ msg_handle* normal_handle = msg_manager_register(my_process_callback, -1);
 
 ### 4.4 发送消息
 
+#### 通过句柄发送消息
+
 ```c
 // 创建消息
 my_data_msg* msg = my_data_msg_create(1, 10.0);
 
 // 发送消息
 msg_queue_code result = msg_manager_send_msg_to(normal_handle, (msg_base*)msg);
+if (result != MSG_QUEUE_CODE_OK) {
+    os_log("Failed to send message, error code: %d", result);
+    msg_manager_free_msg((msg_base*)msg);
+}
+```
+
+#### 通过队列ID发送消息
+
+```c
+// 获取队列ID
+uint8_t queue_id = normal_handle->id;
+
+// 创建消息
+my_data_msg* msg = my_data_msg_create(1, 10.0);
+
+// 通过ID发送消息
+msg_queue_code result = msg_manager_send_msg_to_id(queue_id, (msg_base*)msg);
+if (result != MSG_QUEUE_CODE_OK) {
+    os_log("Failed to send message, error code: %d", result);
+    msg_manager_free_msg((msg_base*)msg);
+}
+```
+
+#### 使用enum来标识队列ID
+
+```c
+// 1. 定义队列ID枚举（已在msg_manager.h中定义）
+/*
+typedef enum {
+    MSG_QUEUE_ID_NORMAL = 1,    // 正常消息队列ID
+    MSG_QUEUE_ID_BLOCKING,       // 阻塞消息队列ID
+    MSG_QUEUE_ID_MAX             // 最大队列ID，用于边界检查
+} msg_queue_id_t;
+*/
+
+// 2. 使用指定的队列ID注册队列
+msg_handle* normal_handle = msg_manager_register_with_id(MSG_QUEUE_ID_NORMAL, my_process_callback, -1);
+msg_handle* blocking_handle = msg_manager_register_with_id(MSG_QUEUE_ID_BLOCKING, my_blocking_callback, -1);
+
+// 3. 在其他任务中直接使用enum值发送消息
+my_data_msg* msg = my_data_msg_create(1, 10.0);
+msg_queue_code result = msg_manager_send_msg_to_id(MSG_QUEUE_ID_NORMAL, (msg_base*)msg);
 if (result != MSG_QUEUE_CODE_OK) {
     os_log("Failed to send message, error code: %d", result);
     msg_manager_free_msg((msg_base*)msg);
@@ -216,8 +260,8 @@ void os_free(void* ptr) {
   - 队列缓冲区：约 256 字节（MSG_QUEUE_MAX_ITEMS=20，每个消息指针 4 字节）
   - **任务栈**：不包含在内（由用户配置）
 
-- **ROM 占用**：约 3.5 KB
-  - msg_manager.c：约 2.5 KB
+- **ROM 占用**：约 3.7 KB
+  - msg_manager.c：约 2.7 KB（包含新增的 msg_manager_send_msg_to_id 和 msg_manager_register_with_id 函数）
   - msg_queue.c：约 1 KB
   - 不包含 main.c 等其他文件的代码
 

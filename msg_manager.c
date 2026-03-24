@@ -475,6 +475,52 @@ msg_handle* msg_manager_register(msg_callback callback,
     return &free_entry->handle;
 }
 
+/**
+ * @brief 使用指定ID注册消息队列
+ *
+ * 使用指定的队列ID注册消息队列
+ *
+ * @param queue_id 队列ID（使用msg_queue_id_t枚举值）
+ * @param callback 消息处理回调函数
+ * @param empty_event_timeout_ms 队列空事件超时时间(毫秒)，-1表示无超时
+ * @return 注册成功返回句柄，失败返回NULL
+ */
+msg_handle* msg_manager_register_with_id(uint8_t queue_id, msg_callback callback,
+                                        int16_t empty_event_timeout_ms)
+{
+    if (callback == NULL || queue_id == 0) {
+        return NULL;
+    }
+
+    if (g_msg_manager.mutex == NULL) {
+        msg_manager_init();
+    }
+
+    // 检查队列ID是否已被使用
+    if (prv_find_entry_by_id(queue_id) != NULL) {
+        return NULL;
+    }
+
+    // 查找空闲条目
+    msg_manager_entry *free_entry = prv_find_free_entry();
+    if (free_entry == NULL) {
+        return NULL;
+    }
+
+    // 使用指定的队列ID注册
+    os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
+    free_entry->is_used = true;
+    free_entry->callback = callback;
+    free_entry->timeout_ms = empty_event_timeout_ms;
+    free_entry->handle.id = queue_id;
+    // 更新next_queue_id，确保它大于已使用的最大ID
+    if (queue_id >= g_msg_manager.next_queue_id) {
+        g_msg_manager.next_queue_id = queue_id + 1;
+    }
+    os_semaphore_give(g_msg_manager.mutex);
+    return &free_entry->handle;
+}
+
 
 
 /**
@@ -620,6 +666,33 @@ void msg_manager_free_msg(msg_base* msg)
 msg_queue_code msg_manager_send_msg_to(msg_handle *to, msg_base *msg)
 {
     return msg_manager_send_msg(to, msg);
+}
+
+/**
+ * @brief 通过队列ID发送消息
+ *
+ * 向指定队列ID的接收者发送消息
+ *
+ * @param queue_id 接收者队列ID
+ * @param msg 要发送的消息
+ * @return 发送结果状态码
+ */
+msg_queue_code msg_manager_send_msg_to_id(uint8_t queue_id, msg_base *msg)
+{
+    if (msg == NULL || g_msg_manager.global_queue == NULL) {
+        return MSG_QUEUE_CODE_NOT_EXISTS;
+    }
+
+    // 检查目标队列是否存在
+    if (prv_find_entry_by_id(queue_id) == NULL) {
+        return MSG_QUEUE_CODE_NOT_EXISTS;
+    }
+
+    // 设置消息的目标ID
+    msg->target_queue_id = queue_id;
+
+    // 发送到全局队列
+    return msg_queue_push(g_msg_manager.global_queue, msg);
 }
 
 /**
