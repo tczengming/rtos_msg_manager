@@ -155,14 +155,12 @@ if (result != MSG_QUEUE_CODE_OK) {
 #### Use Enum to Identify Queue ID
 
 ```c
-// 1. Queue ID enum definition (already defined in msg_manager.h)
-/*
+// 1. Queue ID enum definition (defined in msg_demo.c)
 typedef enum {
     MSG_QUEUE_ID_NORMAL = 1,    // Normal message queue ID
     MSG_QUEUE_ID_BLOCKING,       // Blocking message queue ID
     MSG_QUEUE_ID_MAX             // Max queue ID, used for boundary checking
 } msg_queue_id_t;
-*/
 
 // 2. Register queue with specified ID
 msg_handle* normal_handle = msg_manager_register_with_id(MSG_QUEUE_ID_NORMAL, my_process_callback, -1);

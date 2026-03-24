@@ -9,6 +9,13 @@
 #include "msg_queue.h"
 #include "os_adapter.h"
 
+/** 队列ID枚举定义 */
+typedef enum {
+    MSG_QUEUE_ID_NORMAL = 1,    /**< 正常消息队列ID */
+    MSG_QUEUE_ID_BLOCKING,       /**< 阻塞消息队列ID */
+    MSG_QUEUE_ID_MAX             /**< 最大队列ID，用于边界检查 */
+} msg_queue_id_t;
+
 // 1. 定义消息结构
 typedef struct my_data_msg {
     msg_base base; // 必须是第一个成员，方便强转

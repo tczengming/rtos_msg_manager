@@ -28,12 +28,7 @@
 /** 消息分发器任务优先级 */
 #define MSG_DISPATCHER_PRIORITY (OS_TASK_PRIORITY_IDLE + 1)
 
-/** 队列ID枚举定义 */
-typedef enum {
-    MSG_QUEUE_ID_NORMAL = 1,    /**< 正常消息队列ID */
-    MSG_QUEUE_ID_BLOCKING,       /**< 阻塞消息队列ID */
-    MSG_QUEUE_ID_MAX             /**< 最大队列ID，用于边界检查 */
-} msg_queue_id_t;
+
 
 /** 回调超时机制配置 */
 /* 定义此宏启用回调超时机制，防止回调函数阻塞消息处理 */

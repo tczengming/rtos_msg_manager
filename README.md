@@ -155,14 +155,12 @@ if (result != MSG_QUEUE_CODE_OK) {
 #### 使用enum来标识队列ID
 
 ```c
-// 1. 定义队列ID枚举（已在msg_manager.h中定义）
-/*
+// 1. 定义队列ID枚举（在msg_demo.c中定义）
 typedef enum {
     MSG_QUEUE_ID_NORMAL = 1,    // 正常消息队列ID
     MSG_QUEUE_ID_BLOCKING,       // 阻塞消息队列ID
     MSG_QUEUE_ID_MAX             // 最大队列ID，用于边界检查
 } msg_queue_id_t;
-*/
 
 // 2. 使用指定的队列ID注册队列
 msg_handle* normal_handle = msg_manager_register_with_id(MSG_QUEUE_ID_NORMAL, my_process_callback, -1);
