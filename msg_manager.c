@@ -90,7 +90,7 @@ static msg_manager_entry *prv_find_entry_by_id(uint8_t id)
         return NULL;
     }
 
-    xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
+    os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
     msg_manager_entry *entry = NULL;
     for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
         if (g_msg_manager.entries[i].is_used &&
@@ -99,7 +99,7 @@ static msg_manager_entry *prv_find_entry_by_id(uint8_t id)
             break;
         }
     }
-    xSemaphoreGive(g_msg_manager.mutex);
+    os_semaphore_give(g_msg_manager.mutex);
     return entry;
 }
 
@@ -113,7 +113,7 @@ static msg_manager_entry *prv_find_entry_by_id(uint8_t id)
  */
 static msg_manager_entry *prv_find_free_entry(void)
 {
-    xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
+    os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
     msg_manager_entry *entry = NULL;
     for (int i = 0; i < MSG_MANAGER_MAX_ENTRIES; i++) {
         if (!g_msg_manager.entries[i].is_used) {
@@ -121,7 +121,7 @@ static msg_manager_entry *prv_find_free_entry(void)
             break;
         }
     }
-    xSemaphoreGive(g_msg_manager.mutex);
+    os_semaphore_give(g_msg_manager.mutex);
     return entry;
 }
 
@@ -278,10 +278,10 @@ static void prv_message_dispatcher(void *pvParameters) {
                 task_info->state = TASK_STATE_BUSY;
                 
                 // 启动超时定时器
-                xTimerStart(task_info->timeout_timer, 0);
+                os_timer_start(task_info->timeout_timer, 0);
                 
                 // 通知任务开始执行
-                xTaskNotifyGive(task_info->handle);
+                os_task_notify_give(task_info->handle);
             } else {
                 // 任务池已满，使用默认处理
                 msg_manager_entry *entry = prv_find_entry_by_id(msg->target_queue_id);
@@ -365,23 +365,23 @@ void msg_manager_init(void)
         prv_init_task_pool();
 
         // 创建消息分发器任务
-        g_msg_manager.dispatcher_task = xTaskCreateStatic(
-            prv_message_dispatcher,
+        g_msg_manager.dispatcher_task = os_task_create_static(
             "MsgDispatcher",
-            MSG_DISPATCHER_STACK_SIZE,
+            prv_message_dispatcher,
             NULL,
-            MSG_DISPATCHER_PRIORITY,
+            MSG_DISPATCHER_STACK_SIZE,
+            OS_TASK_PRIORITY_NORMAL,
             g_msg_manager.dispatcher_stack,
             &g_msg_manager.dispatcher_task_buffer
         );
 #else /* ENABLE_CALLBACK_TIMEOUT */
         // 创建消息分发器任务
-        g_msg_manager.dispatcher_task = xTaskCreateStatic(
-            prv_message_dispatcher,
+        g_msg_manager.dispatcher_task = os_task_create_static(
             "MsgDispatcher",
-            MSG_DISPATCHER_STACK_SIZE,
+            prv_message_dispatcher,
             NULL,
-            MSG_DISPATCHER_PRIORITY,
+            MSG_DISPATCHER_STACK_SIZE,
+            OS_TASK_PRIORITY_NORMAL,
             g_msg_manager.dispatcher_stack,
             &g_msg_manager.dispatcher_task_buffer
         );
@@ -400,7 +400,7 @@ void msg_manager_deinit(void)
         return;
     }
 
-    xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
+    os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
 
     // 停止分发器任务
     if (g_msg_manager.dispatcher_task != NULL) {
@@ -420,7 +420,7 @@ void msg_manager_deinit(void)
         g_msg_manager.entries[i].callback = NULL;
     }
 
-    xSemaphoreGive(g_msg_manager.mutex);
+    os_semaphore_give(g_msg_manager.mutex);
 
     // 注意：静态互斥锁不需要删除，只需要重置状态
     g_msg_manager.mutex = NULL;
@@ -466,27 +466,16 @@ msg_handle* msg_manager_register(msg_callback callback,
     }
 
     // 分配队列ID并注册
-    xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
+    os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
     free_entry->is_used = true;
     free_entry->callback = callback;
     free_entry->timeout_ms = empty_event_timeout_ms;
     free_entry->handle.id = g_msg_manager.next_queue_id++;
-    xSemaphoreGive(g_msg_manager.mutex);
+    os_semaphore_give(g_msg_manager.mutex);
     return &free_entry->handle;
 }
 
-/**
- * @brief 通过名称注销消息队列（保留接口）
- *
- * 从管理器中移除指定名称的队列（单队列优化：只清除回调映射）
- *
- * @param name 要注销的队列名称
- */
-void msg_manager_unregister_by_name(const char *name)
-{
-    // 由于不再使用name，此函数不做任何操作
-    (void)name;
-}
+
 
 /**
  * @brief 通过句柄注销消息队列
@@ -503,11 +492,11 @@ void msg_manager_unregister_by_handle(const msg_handle *handle)
 
     msg_manager_entry *found_entry = prv_find_entry_by_id(handle->id);
     if (found_entry != NULL) {
-        xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
+        os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
         // 清除回调，标记为未使用
         found_entry->callback = NULL;
         found_entry->is_used = false;
-        xSemaphoreGive(g_msg_manager.mutex);
+        os_semaphore_give(g_msg_manager.mutex);
     }
 }
 
@@ -519,10 +508,10 @@ void msg_manager_unregister_by_id(uint8_t id)
 
     msg_manager_entry *found_entry = prv_find_entry_by_id(id);
     if (found_entry != NULL) {
-        xSemaphoreTake(g_msg_manager.mutex, portMAX_DELAY);
+        os_semaphore_take(g_msg_manager.mutex, OS_WAIT_FOREVER);
         found_entry->callback = NULL;
         found_entry->is_used = false;
-        xSemaphoreGive(g_msg_manager.mutex);
+        os_semaphore_give(g_msg_manager.mutex);
     }
 }
 
@@ -569,23 +558,23 @@ msg_base* msg_manager_alloc_msg(size_t size)
     // 检查消息大小是否超过缓冲区大小
     if (size > sizeof(msg_pool[0].buffer)) {
         // 超过预分配大小，使用动态分配
-        return (msg_base*)pvPortMalloc(size);
+        return (msg_base*)os_malloc(size);
     }
 
-    xSemaphoreTake(msg_pool_mutex, portMAX_DELAY);
+    os_semaphore_take(msg_pool_mutex, OS_WAIT_FOREVER);
     // 查找空闲消息槽
     for (int i = 0; i < MSG_POOL_SIZE; i++) {
         if (!msg_pool[i].is_used) {
             msg_pool[i].is_used = true;
             msg_pool[i].size = size;
-            xSemaphoreGive(msg_pool_mutex);
+            os_semaphore_give(msg_pool_mutex);
             return (msg_base*)msg_pool[i].buffer;
         }
     }
-    xSemaphoreGive(msg_pool_mutex);
+    os_semaphore_give(msg_pool_mutex);
     
     // 消息池已满，使用动态分配
-    return (msg_base*)pvPortMalloc(size);
+    return (msg_base*)os_malloc(size);
 }
 
 /**
@@ -599,23 +588,23 @@ void msg_manager_free_msg(msg_base* msg)
         return;
     }
 
-    xSemaphoreTake(msg_pool_mutex, portMAX_DELAY);
+    os_semaphore_take(msg_pool_mutex, OS_WAIT_FOREVER);
     // 检查是否是从消息池分配的
     for (int i = 0; i < MSG_POOL_SIZE; i++) {
         if (msg_pool[i].is_used && (msg == (msg_base*)msg_pool[i].buffer)) {
             msg_pool[i].is_used = false;
             msg_pool[i].size = 0;
-            xSemaphoreGive(msg_pool_mutex);
+            os_semaphore_give(msg_pool_mutex);
             return;
         }
     }
-    xSemaphoreGive(msg_pool_mutex);
+    os_semaphore_give(msg_pool_mutex);
     
     // 不是从消息池分配的，使用动态释放
     if (msg->destroy != NULL) {
         msg->destroy(msg);
     } else {
-        vPortFree(msg);
+        os_free(msg);
     }
 }
 

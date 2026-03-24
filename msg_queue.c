@@ -1,8 +1,8 @@
 
 #include "msg_queue.h"
+#include "os_adapter.h"
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 // ============================================================================
 // 内部结构定义
@@ -17,12 +17,12 @@
 // timeout_msg 的 destroy 实现
 static void prv_timeout_msg_destroy(msg_base* self) {
     if (self) {
-        vPortFree(self);
+        os_free(self);
     }
 }
 
 timeout_msg* timeout_msg_create(int16_t ms) {
-    timeout_msg* p_msg = (timeout_msg*)pvPortMalloc(sizeof(timeout_msg));
+    timeout_msg* p_msg = (timeout_msg*)os_malloc(sizeof(timeout_msg));
     if (p_msg) {
         p_msg->base.destroy = prv_timeout_msg_destroy;
         p_msg->base.type_id = MSG_TYPE_TIMEOUT;
@@ -42,7 +42,7 @@ timeout_msg* timeout_msg_create(int16_t ms) {
 // ============================================================================
 
 msg_queue_handle msg_queue_create(uint32_t max_size) {
-    msg_queue_obj* p_obj = (msg_queue_obj*)pvPortMalloc(sizeof(msg_queue_obj));
+    msg_queue_obj* p_obj = (msg_queue_obj*)os_malloc(sizeof(msg_queue_obj));
     if (p_obj == NULL) {
         return NULL;
     }
@@ -53,10 +53,10 @@ msg_queue_handle msg_queue_create(uint32_t max_size) {
     }
 
     // 创建静态队列
-    p_obj->x_queue = xQueueCreateStatic(max_size, sizeof(msg_base*),
+    p_obj->x_queue = os_queue_create_static(max_size, sizeof(msg_base*),
                                        p_obj->queue_storage, &p_obj->x_queue_buffer);
     if (p_obj->x_queue == NULL) {
-        vPortFree(p_obj);
+        os_free(p_obj);
         return NULL;
     }
 
@@ -80,7 +80,7 @@ msg_queue_handle msg_queue_create_static(uint32_t max_size) {
     }
 
     // 创建静态队列
-    static_queue_obj.x_queue = xQueueCreateStatic(max_size, sizeof(msg_base*),
+    static_queue_obj.x_queue = os_queue_create_static(max_size, sizeof(msg_base*),
                                                  static_queue_obj.queue_storage,
                                                  &static_queue_obj.x_queue_buffer);
     if (static_queue_obj.x_queue == NULL) {
@@ -104,7 +104,7 @@ void msg_queue_destroy(msg_queue_handle h_queue) {
 
     // 3. 清理队列中剩余的消息
     msg_base* px_msg;
-    while (xQueueReceive(h_queue->x_queue, &px_msg, 0) == pdTRUE) {
+    while (os_queue_receive(h_queue->x_queue, &px_msg, OS_NO_WAIT)) {
         if (px_msg != NULL && px_msg->destroy != NULL) {
             px_msg->destroy(px_msg);
         }
@@ -117,7 +117,7 @@ void msg_queue_destroy(msg_queue_handle h_queue) {
         h_queue->pfn_callback = NULL;
     } else {
         // 动态对象：释放结构体内存
-        vPortFree(h_queue);
+        os_free(h_queue);
     }
 }
 
@@ -125,12 +125,12 @@ void msg_queue_destroy(msg_queue_handle h_queue) {
 
 // 内部辅助：尝试推送 (对应 TryPush)
 static msg_queue_code prv_try_push_internal(msg_queue_handle h_queue, msg_base* msg) {
-    if (uxQueueSpacesAvailable(h_queue->x_queue) == 0) {
+    if (os_queue_spaces_available(h_queue->x_queue) == 0) {
         return MSG_QUEUE_CODE_REACH_MAX_SIZE;
     }
     
     // 尝试发送，不阻塞
-    if (xQueueSend(h_queue->x_queue, &msg, 0) == pdTRUE) {
+    if (os_queue_send(h_queue->x_queue, &msg, OS_NO_WAIT)) {
         return MSG_QUEUE_CODE_OK;
     } else {
         // 理论上上面检查过空间，这里失败可能是并发竞争或其他错误
@@ -147,7 +147,7 @@ msg_queue_code msg_queue_push_block(msg_queue_handle h_queue, msg_base* msg) {
     if (h_queue == NULL || msg == NULL) return MSG_QUEUE_CODE_ERROR;
     
     // 阻塞发送，直到成功
-    if (xQueueSend(h_queue->x_queue, &msg, portMAX_DELAY) == pdTRUE) {
+    if (os_queue_send(h_queue->x_queue, &msg, OS_WAIT_FOREVER)) {
         return MSG_QUEUE_CODE_OK;
     }
     return MSG_QUEUE_CODE_ERROR;
@@ -156,9 +156,9 @@ msg_queue_code msg_queue_push_block(msg_queue_handle h_queue, msg_base* msg) {
 msg_queue_code msg_queue_push_with_timeout(msg_queue_handle h_queue, msg_base* msg, int16_t timeout_ms) {
     if (h_queue == NULL || msg == NULL) return MSG_QUEUE_CODE_ERROR;
     
-    TickType_t ticks = (timeout_ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    os_tick_t ticks = (timeout_ms < 0) ? OS_WAIT_FOREVER : os_ms_to_ticks(timeout_ms);
     
-    if (xQueueSend(h_queue->x_queue, &msg, ticks) == pdTRUE) {
+    if (os_queue_send(h_queue->x_queue, &msg, ticks)) {
         return MSG_QUEUE_CODE_OK;
     }
     
@@ -180,9 +180,9 @@ msg_queue_code msg_queue_push(msg_queue_handle h_queue, msg_base* msg) {
 msg_queue_code msg_queue_pop(msg_queue_handle h_queue, msg_base** out_msg, pop_type pop_type) {
     if (h_queue == NULL || out_msg == NULL) return MSG_QUEUE_CODE_ERROR;
 
-    TickType_t ticks = (pop_type == POP_BLOCK) ? portMAX_DELAY : 0;
+    os_tick_t ticks = (pop_type == POP_BLOCK) ? OS_WAIT_FOREVER : OS_NO_WAIT;
 
-    if (xQueueReceive(h_queue->x_queue, out_msg, ticks) == pdTRUE) {
+    if (os_queue_receive(h_queue->x_queue, out_msg, ticks)) {
         return MSG_QUEUE_CODE_OK;
     } else {
         return MSG_QUEUE_CODE_EMPTY;

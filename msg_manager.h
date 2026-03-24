@@ -9,8 +9,7 @@
 #ifndef MSG_MANAGER_H
 #define MSG_MANAGER_H
 
-#include "FreeRTOS.h"
-#include "semphr.h"
+#include "os_adapter.h"
 #include "msg_queue.h"
 
 #include <stdint.h>
@@ -70,9 +69,9 @@ typedef struct msg_manager
 {
     msg_manager_entry entries[MSG_MANAGER_MAX_ENTRIES]; /**< 静态条目数组 */
     StaticSemaphore_t mutex_buffer;                      /**< 静态互斥锁缓冲区 */
-    SemaphoreHandle_t mutex;                             /**< 保护并发访问的互斥锁 */
+    os_semaphore_handle mutex;                             /**< 保护并发访问的互斥锁 */
     msg_queue_handle global_queue;                       /**< 全局消息队列 */
-    TaskHandle_t dispatcher_task;                        /**< 消息分发器任务 */
+    os_task_handle dispatcher_task;                        /**< 消息分发器任务 */
     StaticTask_t dispatcher_task_buffer;                 /**< 分发器任务静态缓冲区 */
     StackType_t dispatcher_stack[MSG_DISPATCHER_STACK_SIZE]; /**< 分发器任务栈 */
     uint8_t next_queue_id;                               /**< 下一个队列ID */

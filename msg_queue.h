@@ -1,9 +1,7 @@
 #ifndef MSG_QUEUE_H
 #define MSG_QUEUE_H
 
-#include "FreeRTOS.h"
-#include "task.h"
-#include "queue.h"
+#include "os_adapter.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -62,7 +60,7 @@ typedef void (*msg_callback)(msg_base* msg);
 
 // 消息队列对象 (Opaque Handle)
 typedef struct msg_queue_obj {
-    QueueHandle_t x_queue;                    /**< FreeRTOS 队列，存储 msg_base* */
+    os_queue_handle x_queue;                    /**< OS 队列，存储 msg_base* */
 
     volatile bool b_stop;                      /**< 停止标志 */
     bool b_static;                             /**< 是否为静态创建 */
@@ -171,7 +169,7 @@ static inline void msg_queue_set_push_timeout_ms(msg_queue_handle h_queue, int16
  */
 static inline int msg_queue_size(msg_queue_handle h_queue) {
     if (h_queue == NULL) return 0;
-    return (int)uxQueueMessagesWaiting(h_queue->x_queue);
+    return (int)os_queue_messages_waiting(h_queue->x_queue);
 }
 
 /**
