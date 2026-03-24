@@ -7,7 +7,6 @@
  */
 
 #include "msg_manager.h"
-#include "timers.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -24,7 +23,7 @@ typedef struct msg_pool_item {
 /** 消息池 */
 static msg_pool_item msg_pool[MSG_POOL_SIZE] = { 0 };
 static StaticSemaphore_t msg_pool_mutex_buffer;
-static SemaphoreHandle_t msg_pool_mutex = NULL;
+static os_semaphore_handle msg_pool_mutex = NULL;
 
 #ifdef ENABLE_CALLBACK_TIMEOUT
 // 任务池配置
@@ -39,17 +38,17 @@ typedef enum {
 
 // 回调任务信息
 typedef struct callback_task_info {
-    TaskHandle_t handle;           // 任务句柄
+    os_task_handle handle;           // 任务句柄
     callback_task_state_t state;   // 任务状态
     msg_base* current_msg;         // 当前处理的消息
-    TimerHandle_t timeout_timer;   // 超时定时器
+    os_timer_handle timeout_timer;   // 超时定时器
     StaticTask_t task_buffer;      // 静态任务缓冲区
     StackType_t task_stack[configMINIMAL_STACK_SIZE * 2];  // 任务栈
 } callback_task_info_t;
 
 // 任务池
 static callback_task_info_t g_callback_task_pool[CALLBACK_TASK_POOL_SIZE];
-static SemaphoreHandle_t g_task_pool_mutex;  // 任务池互斥锁
+static os_semaphore_handle g_task_pool_mutex;  // 任务池互斥锁
 
 /**
  * @brief 回调执行任务
@@ -143,13 +142,19 @@ static void prv_callback_task(void *pvParameters) {
     
     for (;;) {
         // 等待任务分配
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        os_task_notify_take(true, OS_WAIT_FOREVER);
         
         if (task_info->state == TASK_STATE_BUSY && task_info->current_msg != NULL) {
             // 执行回调函数
-            msg_manager_entry *entry = prv_find_entry_by_id(task_info->current_msg->target_queue_id);
-            if (entry != NULL && entry->callback != NULL) {
-                entry->callback(task_info->current_msg);
+            if (task_info->current_msg->callback != NULL) {
+                // 使用消息级回调
+                task_info->current_msg->callback(task_info->current_msg);
+            } else {
+                // 使用队列级回调
+                msg_manager_entry *entry = prv_find_entry_by_id(task_info->current_msg->target_queue_id);
+                if (entry != NULL && entry->callback != NULL) {
+                    entry->callback(task_info->current_msg);
+                }
             }
             
             // 释放消息
@@ -165,8 +170,8 @@ static void prv_callback_task(void *pvParameters) {
 /**
  * @brief 任务超时回调函数
  */
-static void prv_task_timeout_callback(TimerHandle_t xTimer) {
-    int task_index = (int)pvTimerGetTimerID(xTimer);
+static void prv_task_timeout_callback(os_timer_handle xTimer) {
+    int task_index = (int)os_timer_get_id(xTimer);
     
     if (task_index >= 0 && task_index < CALLBACK_TASK_POOL_SIZE) {
         callback_task_info_t *task_info = &g_callback_task_pool[task_index];
@@ -175,7 +180,7 @@ static void prv_task_timeout_callback(TimerHandle_t xTimer) {
             printf("Callback task %d execution timeout!\n", task_index);
             
             // 强制终止任务
-            vTaskDelete(task_info->handle);
+            os_task_delete(task_info->handle);
             
             // 释放消息
             if (task_info->current_msg != NULL) {
@@ -184,11 +189,11 @@ static void prv_task_timeout_callback(TimerHandle_t xTimer) {
             }
             
             // 重新创建任务
-            task_info->handle = xTaskCreateStatic(
-                prv_callback_task,
+            task_info->handle = os_task_create_static(
                 "CallbackTask",
-                configMINIMAL_STACK_SIZE * 2,
+                prv_callback_task,
                 task_info,
+                configMINIMAL_STACK_SIZE * 2,
                 MSG_DISPATCHER_PRIORITY + 1,
                 task_info->task_stack,
                 &task_info->task_buffer
@@ -205,26 +210,26 @@ static void prv_task_timeout_callback(TimerHandle_t xTimer) {
  */
 static void prv_init_task_pool(void) {
     // 创建任务池互斥锁
-    g_task_pool_mutex = xSemaphoreCreateMutex();
+    g_task_pool_mutex = os_semaphore_create_mutex();
     
     // 初始化任务池
     for (int i = 0; i < CALLBACK_TASK_POOL_SIZE; i++) {
         // 创建回调任务
-        g_callback_task_pool[i].handle = xTaskCreateStatic(
-            prv_callback_task,
+        g_callback_task_pool[i].handle = os_task_create_static(
             "CallbackTask",
-            configMINIMAL_STACK_SIZE * 2,
+            prv_callback_task,
             &g_callback_task_pool[i],
+            configMINIMAL_STACK_SIZE * 2,
             MSG_DISPATCHER_PRIORITY + 1,
             g_callback_task_pool[i].task_stack,
             &g_callback_task_pool[i].task_buffer
         );
         
         // 创建超时定时器
-        g_callback_task_pool[i].timeout_timer = xTimerCreate(
+        g_callback_task_pool[i].timeout_timer = os_timer_create(
             "CallbackTimeout",
-            pdMS_TO_TICKS(CALLBACK_TIMEOUT_MS),
-            pdFALSE,
+            os_ms_to_ticks(CALLBACK_TIMEOUT_MS),
+            false,
             (void *)i,
             prv_task_timeout_callback
         );
@@ -241,7 +246,7 @@ static void prv_init_task_pool(void) {
  * @return 空闲任务的索引，-1表示无空闲任务
  */
 static int prv_allocate_task(void) {
-    xSemaphoreTake(g_task_pool_mutex, portMAX_DELAY);
+    os_semaphore_take(g_task_pool_mutex, OS_WAIT_FOREVER);
     
     int task_index = -1;
     for (int i = 0; i < CALLBACK_TASK_POOL_SIZE; i++) {
@@ -252,7 +257,7 @@ static int prv_allocate_task(void) {
         }
     }
     
-    xSemaphoreGive(g_task_pool_mutex);
+    os_semaphore_give(g_task_pool_mutex);
     return task_index;
 }
 
@@ -308,19 +313,18 @@ static void prv_message_dispatcher(void *pvParameters) {
     for (;;) {
         // 从全局队列接收消息
         if (msg_queue_pop(g_msg_manager.global_queue, &msg, POP_BLOCK) == MSG_QUEUE_CODE_OK) {
-            // 根据target_queue_id查找对应的回调函数
-            msg_manager_entry *entry = prv_find_entry_by_id(msg->target_queue_id);
-            if (entry != NULL && entry->callback != NULL) {
-                // 调用回调函数处理消息
-                entry->callback(msg);
+            // 优先使用消息级回调
+            if (msg->callback != NULL) {
+                msg->callback(msg);
             } else {
-                // 未找到对应条目，销毁消息
-                if (msg->destroy != NULL) {
-                    msg->destroy(msg);
-                } else {
-                    msg_manager_free_msg(msg);
+                // 使用队列级回调
+                msg_manager_entry *entry = prv_find_entry_by_id(msg->target_queue_id);
+                if (entry != NULL && entry->callback != NULL) {
+                    entry->callback(msg);
                 }
             }
+            // 自动释放消息
+            msg_manager_free_msg(msg);
         }
     }
 }
@@ -343,10 +347,10 @@ void msg_manager_init(void)
         }
 
         // 创建静态互斥锁
-        g_msg_manager.mutex = xSemaphoreCreateMutexStatic(&g_msg_manager.mutex_buffer);
+        g_msg_manager.mutex = os_semaphore_create_mutex_static(&g_msg_manager.mutex_buffer);
 
         // 创建消息池互斥锁
-        msg_pool_mutex = xSemaphoreCreateMutexStatic(&msg_pool_mutex_buffer);
+        msg_pool_mutex = os_semaphore_create_mutex_static(&msg_pool_mutex_buffer);
 
         // 初始化消息池
         for (int i = 0; i < MSG_POOL_SIZE; i++) {
@@ -404,7 +408,7 @@ void msg_manager_deinit(void)
 
     // 停止分发器任务
     if (g_msg_manager.dispatcher_task != NULL) {
-        vTaskDelete(g_msg_manager.dispatcher_task);
+        os_task_delete(g_msg_manager.dispatcher_task);
         g_msg_manager.dispatcher_task = NULL;
     }
 

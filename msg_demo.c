@@ -29,6 +29,20 @@ my_data_msg* my_data_msg_create(int id, float val) {
     if (p) {
         p->base.destroy = my_data_msg_destroy;
         p->base.type_id = MSG_TYPE_DATA;
+        p->base.callback = NULL; // 默认为NULL，使用队列级回调
+        p->sensor_id = id;
+        p->value = val;
+    }
+    return p;
+}
+
+// 3.1 工厂函数（带回调）
+my_data_msg* my_data_msg_create_with_callback(int id, float val, void (*callback)(msg_base*)) {
+    my_data_msg* p = (my_data_msg*)msg_manager_alloc_msg(sizeof(my_data_msg));
+    if (p) {
+        p->base.destroy = my_data_msg_destroy;
+        p->base.type_id = MSG_TYPE_DATA;
+        p->base.callback = callback; // 设置消息级回调
         p->sensor_id = id;
         p->value = val;
     }
@@ -49,8 +63,7 @@ void my_process_callback(msg_base* msg) {
         os_log("Unknown message type: %d", msg->type_id);
     }
     
-    // 释放消息
-    msg_manager_free_msg(msg);
+    // 不需要手动释放消息，分发器会自动释放
 }
 
 // 5. 故意阻塞的回调函数（用于测试超时机制）
@@ -67,8 +80,7 @@ void my_blocking_callback(msg_base* msg) {
         os_log("Blocking callback: Blocking completed");
     }
     
-    // 释放消息
-    msg_manager_free_msg(msg);
+    // 不需要手动释放消息，分发器会自动释放
 }
 
 // 演示任务：定期发送消息

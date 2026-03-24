@@ -177,6 +177,54 @@ if (result != MSG_QUEUE_CODE_OK) {
 }
 ```
 
+#### Use Message-Level Callback
+
+```c
+// 1. Define message-level callback function
+void my_special_callback(msg_base* msg) {
+    if (!msg) return;
+    
+    my_data_msg* d_msg = (my_data_msg*)msg;
+    os_log("Special handling: Sensor %d, Value %.2f", d_msg->sensor_id, d_msg->value);
+    
+    // No need to manually free the message, dispatcher will automatically free it
+}
+
+// 2. Create message with callback
+my_data_msg* msg = my_data_msg_create_with_callback(1, 10.0, my_special_callback);
+
+// 3. Send message
+msg_queue_code result = msg_manager_send_msg_to_id(MSG_QUEUE_ID_NORMAL, (msg_base*)msg);
+if (result != MSG_QUEUE_CODE_OK) {
+    os_log("Failed to send message, error code: %d", result);
+    msg_manager_free_msg((msg_base*)msg);
+}
+```
+
+### 4.5 Automatic Release Mechanism
+
+The message manager implements an automatic release mechanism with the following features:
+
+1. **Automatic Release**: The message dispatcher automatically calls `msg_manager_free_msg` to release the message after processing it. Callback functions do not need to manually release messages.
+
+2. **Callback Priority**:
+   - Message-level callback (`msg->callback`) is used first
+   - If message-level callback is NULL, queue-level callback (the callback specified when registering the queue) is used
+
+3. **Memory Management**:
+   - The message pool automatically manages message memory allocation and release
+   - For messages larger than the message pool size, dynamic memory allocation is used
+
+4. **Usage Recommendations**:
+   - Do not manually call `msg_manager_free_msg` in callback functions, as this will cause double release
+   - Use message-level callback for messages that require special handling
+   - Use queue-level callback for message types that require unified handling
+
+5. **Backward Compatibility**:
+   - Existing code using queue-level callback does not need to be modified
+   - New code can choose to use message-level callback or queue-level callback
+
+
 ### 4.5 Unregister Message Queue
 
 ```c

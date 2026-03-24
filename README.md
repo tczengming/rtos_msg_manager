@@ -177,6 +177,54 @@ if (result != MSG_QUEUE_CODE_OK) {
 }
 ```
 
+#### 使用消息级回调
+
+```c
+// 1. 定义消息级回调函数
+void my_special_callback(msg_base* msg) {
+    if (!msg) return;
+    
+    my_data_msg* d_msg = (my_data_msg*)msg;
+    os_log("Special handling: Sensor %d, Value %.2f", d_msg->sensor_id, d_msg->value);
+    
+    // 不需要手动释放消息，分发器会自动释放
+}
+
+// 2. 创建带回调的消息
+my_data_msg* msg = my_data_msg_create_with_callback(1, 10.0, my_special_callback);
+
+// 3. 发送消息
+msg_queue_code result = msg_manager_send_msg_to_id(MSG_QUEUE_ID_NORMAL, (msg_base*)msg);
+if (result != MSG_QUEUE_CODE_OK) {
+    os_log("Failed to send message, error code: %d", result);
+    msg_manager_free_msg((msg_base*)msg);
+}
+```
+
+### 4.5 自动释放机制
+
+消息管理器实现了自动释放机制，具体特点如下：
+
+1. **自动释放**：消息分发器在处理完消息后会自动调用 `msg_manager_free_msg` 释放消息，回调函数不需要手动释放消息
+
+2. **回调优先级**：
+   - 优先使用消息级回调（`msg->callback`）
+   - 如果消息级回调为 NULL，则使用队列级回调（注册队列时指定的回调）
+
+3. **内存管理**：
+   - 消息池会自动管理消息的内存分配和释放
+   - 对于超过消息池大小的消息，会使用动态内存分配
+
+4. **使用建议**：
+   - 回调函数中不要手动调用 `msg_manager_free_msg`，否则会导致重复释放
+   - 对于需要特殊处理的消息，使用消息级回调
+   - 对于需要统一处理的消息类型，使用队列级回调
+
+5. **向后兼容**：
+   - 现有的使用队列级回调的代码无需修改
+   - 新代码可以选择使用消息级回调或队列级回调
+
+
 ### 4.5 注销消息队列
 
 ```c

@@ -30,6 +30,8 @@ typedef struct msg_base {
     uint8_t type_id;
     // 目标队列 ID
     uint8_t target_queue_id;
+    // 消息级回调函数
+    void (*callback)(struct msg_base* self);
 } msg_base;
 
 // 对应 TimeoutMsg

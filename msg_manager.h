@@ -26,7 +26,7 @@
 #define MSG_POOL_SIZE 10
 
 /** 消息分发器任务优先级 */
-#define MSG_DISPATCHER_PRIORITY (tskIDLE_PRIORITY + 1)
+#define MSG_DISPATCHER_PRIORITY (OS_TASK_PRIORITY_IDLE + 1)
 
 /** 队列ID枚举定义 */
 typedef enum {
