@@ -140,11 +140,13 @@ void prv_demo_task(void *pv_parameters) {
 
         counter++;
         
+        /*
         if (counter >= 3) {
             os_task_delay(os_ms_to_ticks(5000));
             os_log("发送完3组消息后退出");
             break;
         }
+        */
 
         // 每5秒发送一组消息
         os_task_delay(os_ms_to_ticks(5000));

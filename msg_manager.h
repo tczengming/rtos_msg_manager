@@ -28,8 +28,6 @@
 /** 消息分发器任务优先级 */
 #define MSG_DISPATCHER_PRIORITY (OS_TASK_PRIORITY_IDLE + 1)
 
-
-
 /** 回调超时机制配置 */
 /* 定义此宏启用回调超时机制，防止回调函数阻塞消息处理 */
 //#define ENABLE_CALLBACK_TIMEOUT
@@ -37,8 +35,22 @@
 /** 回调超时时间（毫秒） */
 #define CALLBACK_TIMEOUT_MS 1000
 
+/** 任务池配置 */
+#define DEFAULT_TASK_POOL_SIZE 2  // 默认任务池大小
+
 /** 定义此宏启用真正中断阻塞回调的功能 */
 //#define ENABLE_CALLBACK_INTERRUPT
+
+/** 定义此宏启用动态任务池大小调整功能 */
+//#define ENABLE_DYNAMIC_TASK_POOL
+
+#ifdef ENABLE_DYNAMIC_TASK_POOL
+#define MIN_TASK_POOL_SIZE 2  // 最小任务池大小,要大于等于2否则中止阻塞回调功能无法正常工作
+#define MAX_TASK_POOL_SIZE 4  // 最大任务池大小
+#define TASK_POOL_ADJUST_INTERVAL_MS 10000  // 任务池调整间隔（毫秒）
+#define TASK_POOL_COOLDOWN_PERIOD_MS 60000  // 任务池调整冷却期（毫秒）
+#define TASK_POOL_LOAD_THRESHOLD 80  // 任务池负载阈值（%）
+#endif
 
 
 
@@ -72,12 +84,12 @@ typedef struct msg_manager_entry {
 typedef struct msg_manager
 {
     msg_manager_entry entries[MSG_MANAGER_MAX_ENTRIES]; /**< 静态条目数组 */
-    StaticSemaphore_t mutex_buffer;                      /**< 静态互斥锁缓冲区 */
+    os_static_semaphore_t mutex_buffer;                      /**< 静态互斥锁缓冲区 */
     os_semaphore_handle mutex;                             /**< 保护并发访问的互斥锁 */
     msg_queue_handle global_queue;                       /**< 全局消息队列 */
     os_task_handle dispatcher_task;                        /**< 消息分发器任务 */
-    StaticTask_t dispatcher_task_buffer;                 /**< 分发器任务静态缓冲区 */
-    StackType_t dispatcher_stack[MSG_DISPATCHER_STACK_SIZE]; /**< 分发器任务栈 */
+    os_static_task_t dispatcher_task_buffer;                 /**< 分发器任务静态缓冲区 */
+    os_stack_t dispatcher_stack[MSG_DISPATCHER_STACK_SIZE]; /**< 分发器任务栈 */
     uint8_t next_queue_id;                               /**< 下一个队列ID */
 } msg_manager;
 

@@ -26,8 +26,7 @@ static os_static_semaphore_t msg_pool_mutex_buffer;
 static os_semaphore_handle msg_pool_mutex = NULL;
 
 #ifdef ENABLE_CALLBACK_TIMEOUT
-// 任务池配置
-#define CALLBACK_TASK_POOL_SIZE 4  // 任务池大小
+#define CALLBACK_TASK_POOL_SIZE DEFAULT_TASK_POOL_SIZE  // 任务池大小
 
 // 回调任务状态
 typedef enum {
@@ -42,13 +41,27 @@ typedef struct callback_task_info {
     callback_task_state_t state;   // 任务状态
     msg_base* current_msg;         // 当前处理的消息
     os_timer_handle timeout_timer;   // 超时定时器
-    StaticTask_t task_buffer;      // 静态任务缓冲区
-    StackType_t task_stack[OS_MINIMAL_STACK_SIZE * 2];  // 任务栈
+    os_static_task_t task_buffer;      // 静态任务缓冲区
+    os_stack_t task_stack[OS_MINIMAL_STACK_SIZE * 2];  // 任务栈
 } callback_task_info_t;
 
 // 任务池
 static callback_task_info_t g_callback_task_pool[CALLBACK_TASK_POOL_SIZE];
 static os_semaphore_handle g_task_pool_mutex;  // 任务池互斥锁
+
+// 当前任务池大小（无论是否启用动态任务池）
+static uint8_t g_current_task_pool_size = DEFAULT_TASK_POOL_SIZE;
+
+#ifdef ENABLE_DYNAMIC_TASK_POOL
+// 任务池状态
+static uint8_t g_active_task_count = 0;  // 当前活跃任务数量
+static uint32_t g_task_pool_adjust_time = 0;  // 上次调整任务池大小的时间
+
+// 函数声明
+static void prv_adjust_task_pool_size(void);
+static uint8_t prv_calculate_task_pool_load(void);
+#endif
+#endif /* ENABLE_CALLBACK_TIMEOUT */
 
 /**
  * @brief 回调执行任务
@@ -57,10 +70,12 @@ static os_semaphore_handle g_task_pool_mutex;  // 任务池互斥锁
  */
 static void prv_callback_task(void *pvParameters);
 
+#ifdef ENABLE_CALLBACK_TIMEOUT
 /**
  * @brief 任务超时回调函数
  */
-static void prv_task_timeout_callback(TimerHandle_t xTimer);
+static void prv_task_timeout_callback(os_timer_handle xTimer);
+#endif /* ENABLE_CALLBACK_TIMEOUT */
 
 /**
  * @brief 初始化任务池
@@ -73,7 +88,6 @@ static void prv_init_task_pool(void);
  * @return 空闲任务的索引，-1表示无空闲任务
  */
 static int prv_allocate_task(void);
-#endif /* ENABLE_CALLBACK_TIMEOUT */
 
 /**
  * @brief 查找指定id的队列条目
@@ -163,10 +177,24 @@ static void prv_callback_task(void *pvParameters) {
             // 清理状态
             task_info->current_msg = NULL;
             task_info->state = TASK_STATE_IDLE;
+            
+            #ifdef ENABLE_DYNAMIC_TASK_POOL
+            // 更新活跃任务数量
+            os_semaphore_take(g_task_pool_mutex, OS_WAIT_FOREVER);
+            if (g_active_task_count > 0) {
+                g_active_task_count--;
+            }
+            os_semaphore_give(g_task_pool_mutex);
+            
+            // 检查并调整任务池大小
+            prv_adjust_task_pool_size();
+            #endif
         }
     }
 }
+#endif /* ENABLE_CALLBACK_TIMEOUT */
 
+#ifdef ENABLE_CALLBACK_TIMEOUT
 /**
  * @brief 任务超时回调函数
  */
@@ -189,6 +217,10 @@ static void prv_task_timeout_callback(os_timer_handle xTimer) {
             // 使用中断方式强制终止回调函数的执行
             os_task_delete(task_info->handle);
             os_log("Timeout callback task %d force deleted!", task_index);
+            
+            // 停止并清理定时器
+            if (task_info->timeout_timer != NULL)
+                os_timer_stop(task_info->timeout_timer, OS_WAIT_FOREVER);
 
             // 重新创建任务
             task_info->handle = os_task_create_static(
@@ -200,10 +232,31 @@ static void prv_task_timeout_callback(os_timer_handle xTimer) {
                 task_info->task_stack,
                 &task_info->task_buffer
             );
+            
+            // 重新创建定时器
+            task_info->timeout_timer = os_timer_create(
+                "CallbackTimeout",
+                os_ms_to_ticks(CALLBACK_TIMEOUT_MS),
+                false,
+                (void *)task_index,
+                prv_task_timeout_callback
+            );
             #endif
             
             // 重置状态
             task_info->state = TASK_STATE_IDLE;
+            
+            #ifdef ENABLE_DYNAMIC_TASK_POOL
+            // 更新活跃任务数量
+            os_semaphore_take(g_task_pool_mutex, OS_WAIT_FOREVER);
+            if (g_active_task_count > 0) {
+                g_active_task_count--;
+            }
+            os_semaphore_give(g_task_pool_mutex);
+            
+            // 检查并调整任务池大小
+            prv_adjust_task_pool_size();
+            #endif
         }
     }
 }
@@ -217,31 +270,170 @@ static void prv_init_task_pool(void) {
     
     // 初始化任务池
     for (int i = 0; i < CALLBACK_TASK_POOL_SIZE; i++) {
-        // 创建回调任务
-        g_callback_task_pool[i].handle = os_task_create_static(
-            "CallbackTask",
-            prv_callback_task,
-            &g_callback_task_pool[i],
-            OS_MINIMAL_STACK_SIZE * 2,
-            MSG_DISPATCHER_PRIORITY + 1,
-            g_callback_task_pool[i].task_stack,
-            &g_callback_task_pool[i].task_buffer
-        );
+        // 只初始化当前大小的任务
+        if (i < g_current_task_pool_size) {
+            // 创建回调任务
+            g_callback_task_pool[i].handle = os_task_create_static(
+                "CallbackTask",
+                prv_callback_task,
+                &g_callback_task_pool[i],
+                OS_MINIMAL_STACK_SIZE * 2,
+                MSG_DISPATCHER_PRIORITY + 1,
+                g_callback_task_pool[i].task_stack,
+                &g_callback_task_pool[i].task_buffer
+            );
+            
+            // 创建超时定时器
+            g_callback_task_pool[i].timeout_timer = os_timer_create(
+                "CallbackTimeout",
+                os_ms_to_ticks(CALLBACK_TIMEOUT_MS),
+                false,
+                (void *)i,
+                prv_task_timeout_callback
+            );
+            
+            // 初始化为空闲状态
+            g_callback_task_pool[i].state = TASK_STATE_IDLE;
+            g_callback_task_pool[i].current_msg = NULL;
+        } else {
+            // 未使用的任务槽
+            g_callback_task_pool[i].handle = NULL;
+            g_callback_task_pool[i].timeout_timer = NULL;
+            g_callback_task_pool[i].state = TASK_STATE_IDLE;
+            g_callback_task_pool[i].current_msg = NULL;
+        }
+    }
+    
+    #ifdef ENABLE_DYNAMIC_TASK_POOL
+    // 初始化任务池状态
+    g_active_task_count = 0;
+    g_task_pool_adjust_time = 0;
+    #endif
+}
+
+#ifdef ENABLE_DYNAMIC_TASK_POOL
+/**
+ * @brief 计算任务池负载
+ *
+ * @return 任务池负载百分比
+ */
+static uint8_t prv_calculate_task_pool_load(void) {
+    if (g_current_task_pool_size == 0) {
+        return 0;
+    }
+    // 计算负载，避免短暂的负载波动导致频繁调整
+    static uint8_t load_history[4] = {0};  // 保存最近4次的负载值
+    static uint8_t history_index = 0;
+    
+    // 计算当前负载
+    uint8_t current_load = (g_active_task_count * 100) / g_current_task_pool_size;
+    
+    // 更新负载历史
+    load_history[history_index] = current_load;
+    history_index = (history_index + 1) % 4;
+    
+    // 计算平均负载
+    uint16_t total_load = 0;
+    for (int i = 0; i < 4; i++) {
+        total_load += load_history[i];
+    }
+    uint8_t average_load = total_load / 4;
+    
+    return average_load;
+}
+
+/**
+ * @brief 调整任务池大小
+ *
+ * 根据当前负载动态调整任务池大小
+ */
+static void prv_adjust_task_pool_size(void) {
+    // 检查是否需要调整
+    uint32_t current_time = xTaskGetTickCount();
+    if (current_time - g_task_pool_adjust_time < os_ms_to_ticks(TASK_POOL_ADJUST_INTERVAL_MS)) {
+        return; // 还未到调整时间
+    }
+    
+    // 计算当前负载
+    uint8_t load = prv_calculate_task_pool_load();
+    uint8_t new_size = g_current_task_pool_size;
+    
+    // 根据负载调整任务池大小
+    if (load > TASK_POOL_LOAD_THRESHOLD && new_size < MAX_TASK_POOL_SIZE) {
+        // 负载过高，增加任务池大小
+        new_size++;
+        os_log("Task pool load high (%d%%), increasing size to %d", load, new_size);
+    } else if (load < TASK_POOL_LOAD_THRESHOLD / 4 && new_size > MIN_TASK_POOL_SIZE) {
+        // 负载过低，减少任务池大小
+        // 使用更低的阈值，避免频繁调整
+        new_size--;
+        os_log("Task pool load low (%d%%), decreasing size to %d", load, new_size);
+    }
+    
+    // 如果需要调整大小
+    if (new_size != g_current_task_pool_size) {
+        os_semaphore_take(g_task_pool_mutex, OS_WAIT_FOREVER);
         
-        // 创建超时定时器
-        g_callback_task_pool[i].timeout_timer = os_timer_create(
-            "CallbackTimeout",
-            os_ms_to_ticks(CALLBACK_TIMEOUT_MS),
-            false,
-            (void *)i,
-            prv_task_timeout_callback
-        );
+        if (new_size > g_current_task_pool_size) {
+            // 增加任务池大小
+            for (int i = g_current_task_pool_size; i < new_size; i++) {
+                if (i < CALLBACK_TASK_POOL_SIZE) {
+                    // 创建新任务
+                    g_callback_task_pool[i].handle = os_task_create_static(
+                        "CallbackTask",
+                        prv_callback_task,
+                        &g_callback_task_pool[i],
+                        OS_MINIMAL_STACK_SIZE * 2,
+                        MSG_DISPATCHER_PRIORITY + 1,
+                        g_callback_task_pool[i].task_stack,
+                        &g_callback_task_pool[i].task_buffer
+                    );
+                    
+                    // 创建超时定时器
+                    g_callback_task_pool[i].timeout_timer = os_timer_create(
+                        "CallbackTimeout",
+                        os_ms_to_ticks(CALLBACK_TIMEOUT_MS),
+                        false,
+                        (void *)i,
+                        prv_task_timeout_callback
+                    );
+                    
+                    // 初始化为空闲状态
+                    g_callback_task_pool[i].state = TASK_STATE_IDLE;
+                    g_callback_task_pool[i].current_msg = NULL;
+                }
+            }
+        } else {
+            // 减少任务池大小
+            for (int i = g_current_task_pool_size - 1; i >= new_size; i--) {
+                if (i < CALLBACK_TASK_POOL_SIZE && g_callback_task_pool[i].handle != NULL) {
+                    // 检查任务是否空闲
+                    if (g_callback_task_pool[i].state == TASK_STATE_IDLE) {
+                        // 停止并清理定时器
+                        if (g_callback_task_pool[i].timeout_timer != NULL) {
+                            os_timer_stop(g_callback_task_pool[i].timeout_timer, OS_WAIT_FOREVER);
+                        }
+                        // 删除任务
+                        os_task_delete(g_callback_task_pool[i].handle);
+                        g_callback_task_pool[i].handle = NULL;
+                        g_callback_task_pool[i].timeout_timer = NULL;
+                        g_callback_task_pool[i].state = TASK_STATE_IDLE;
+                        g_callback_task_pool[i].current_msg = NULL;
+                    }
+                }
+            }
+        }
         
-        // 初始化为空闲状态
-        g_callback_task_pool[i].state = TASK_STATE_IDLE;
-        g_callback_task_pool[i].current_msg = NULL;
+        // 更新当前任务池大小
+        g_current_task_pool_size = new_size;
+        // 调整后设置冷却期，避免短时间内再次调整
+        g_task_pool_adjust_time = current_time + os_ms_to_ticks(TASK_POOL_COOLDOWN_PERIOD_MS);
+        os_log("Task pool size adjusted to %d, cooldown period started for %dms", new_size, TASK_POOL_COOLDOWN_PERIOD_MS);
+        
+        os_semaphore_give(g_task_pool_mutex);
     }
 }
+#endif
 
 /**
  * @brief 从任务池分配一个空闲任务
@@ -252,15 +444,25 @@ static int prv_allocate_task(void) {
     os_semaphore_take(g_task_pool_mutex, OS_WAIT_FOREVER);
     
     int task_index = -1;
-    for (int i = 0; i < CALLBACK_TASK_POOL_SIZE; i++) {
+    // 只在当前任务池大小范围内查找
+    for (int i = 0; i < g_current_task_pool_size; i++) {
         if (g_callback_task_pool[i].state == TASK_STATE_IDLE) {
             task_index = i;
             g_callback_task_pool[i].state = TASK_STATE_BUSY;
+            #ifdef ENABLE_DYNAMIC_TASK_POOL
+            g_active_task_count++;
+            #endif
             break;
         }
     }
     
     os_semaphore_give(g_task_pool_mutex);
+    
+    #ifdef ENABLE_DYNAMIC_TASK_POOL
+    // 检查并调整任务池大小
+    prv_adjust_task_pool_size();
+    #endif
+    
     return task_index;
 }
 
@@ -370,6 +572,7 @@ void msg_manager_init(void)
 #ifdef ENABLE_CALLBACK_TIMEOUT
         // 初始化任务池
         prv_init_task_pool();
+#endif /* ENABLE_CALLBACK_TIMEOUT */
 
         // 创建消息分发器任务
         g_msg_manager.dispatcher_task = os_task_create_static(
@@ -381,18 +584,6 @@ void msg_manager_init(void)
             g_msg_manager.dispatcher_stack,
             &g_msg_manager.dispatcher_task_buffer
         );
-#else /* ENABLE_CALLBACK_TIMEOUT */
-        // 创建消息分发器任务
-        g_msg_manager.dispatcher_task = os_task_create_static(
-            "MsgDispatcher",
-            prv_message_dispatcher,
-            NULL,
-            MSG_DISPATCHER_STACK_SIZE,
-            OS_TASK_PRIORITY_NORMAL,
-            g_msg_manager.dispatcher_stack,
-            &g_msg_manager.dispatcher_task_buffer
-        );
-#endif /* ENABLE_CALLBACK_TIMEOUT */
     }
 }
 

@@ -20,14 +20,14 @@ Message Manager is a lightweight message passing system based on FreeRTOS, provi
 **Function**: Enable callback timeout detection mechanism
 
 **Purpose**:
-- Automatically terminate the callback task when the callback function execution time exceeds the set timeout
+- When the callback function execution time exceeds the set timeout time, it will detect the timeout and issue a reminder
 - Prevent a single callback function from executing for too long, affecting the system's response performance
 - Improve system reliability and stability
 
 **RAM Usage Increase**:
-- Task pool: Each task occupies about 256 bytes of stack space, default 4 tasks
+- **Task pool**: Each task occupies about 256 bytes of stack space, default 2 tasks
 - Timer: Each task has one timer, occupying about 64 bytes
-- Total increase: About 1280 bytes
+- Total increase: About 640 bytes
 
 **ROM Usage Increase**:
 - Task pool management code: About 1.5 KB
@@ -39,8 +39,42 @@ Message Manager is a lightweight message passing system based on FreeRTOS, provi
 - **Function**: Enable the real interrupt blocking callback function, when the callback function execution times out, it will forcibly terminate the execution of the callback function through interrupt.
 - **Default value**: Undefined (disabled)
 - **Usage scenario**: When the callback function may have an infinite loop or serious blocking, it is necessary to forcibly terminate the execution of the callback function.
+- **Dependency**: Needs to be used together with ENABLE_CALLBACK_TIMEOUT, invalid when used alone.
 
-### 3.3 Message-level callbacks
+### 3.3 ENABLE_DYNAMIC_TASK_POOL
+
+**Function**: Enable dynamic task pool size adjustment functionality
+
+**Effects**:
+- Dynamically adjust task pool size based on system load, optimizing system resource usage
+- Automatically increase task pool size when load is high
+- Automatically decrease task pool size when load is low
+- Avoid resource waste caused by overly large task pool or task waiting caused by overly small task pool
+
+**Configuration parameters**:
+- `MIN_TASK_POOL_SIZE`: Minimum task pool size, default 2 (must be 2 or greater, otherwise timeout abort functionality will fail)
+- `MAX_TASK_POOL_SIZE`: Maximum task pool size, default 4
+- `DEFAULT_TASK_POOL_SIZE`: Default task pool size, default 2
+- `TASK_POOL_ADJUST_INTERVAL_MS`: Task pool adjustment interval, default 10000ms
+- `TASK_POOL_COOLDOWN_PERIOD_MS`: Task pool adjustment cooldown period, default 60000ms
+- `TASK_POOL_LOAD_THRESHOLD`: Task pool load threshold, default 80%
+
+**Important note**:
+- The minimum task pool size must be set to 2 or greater, otherwise timeout abort functionality will fail
+- This is because when one task is executing a callback, another task is needed to handle timeout detection and abort operations
+
+**RAM usage impact**:
+- Task pool size will be dynamically adjusted based on load, range: 2-4 tasks
+- Each task occupies about 256 bytes of stack space
+- Each task has one timer, occupying about 64 bytes
+- RAM usage will change based on current task pool size during dynamic adjustment
+
+**ROM usage increase**:
+- Dynamic task pool management code: about 1 KB
+- Load calculation and adjustment logic: about 0.5 KB
+- Total increase: about 1.5 KB
+
+### 3.4 Message-level callbacks
 
 - **Function**: Support setting callback functions in messages. When a message is processed, it will preferentially execute the message-level callback instead of the queue-level callback.
 - **Usage scenario**: When different messages require different processing logic, using message-level callbacks can avoid a lot of type judgment in queue callbacks.
@@ -351,8 +385,13 @@ This way, when the callback function execution times out, the system will forcib
 ### 6.5 Full Configuration (All Features Enabled)
 
 - **RAM Usage**: About 1.4 KB (excluding task stack)
-- **Task Stack Usage**: About 1536 bytes (basic task stack 512 bytes + callback tasks 1024 bytes)
-- **ROM Usage**: About 5.8 KB (only includes msg_manager related code)
+- **Task Stack Usage**: About 1024 bytes (basic task stack 512 bytes + callback tasks 512 bytes)
+- **ROM Usage**: About 7.3 KB (only includes msg_manager related code)
+
+**Note**:
+- After enabling ENABLE_CALLBACK_INTERRUPT, ROM usage will increase by about 100-200 bytes, and RAM usage remains basically unchanged
+- After enabling ENABLE_DYNAMIC_TASK_POOL, task stack usage will be dynamically adjusted based on load, range: 1024-1536 bytes
+- Task pool size starts from 2 tasks by default and automatically adjusts based on load, minimum 2 tasks
 
 ## 7. Performance Optimization
 
@@ -392,16 +431,18 @@ This way, when the callback function execution times out, the system will forcib
 - Check if the timeout value is set reasonably
 - Check if the task pool has enough tasks
 
+### 8.4 Dynamic Task Pool Not Working
+
+- Check if `ENABLE_DYNAMIC_TASK_POOL` is defined
+- Check if task pool size configuration is reasonable
+- Check if load calculation is correct
+- Check if cooldown period setting is too long
+
 ## 9. Example Code
 
 Complete example code can be found in the `msg_demo.c` file, which includes the complete process of message creation, sending, and processing.
 
-## 10. Version History
 
-- v1.0.0: Initial version, supporting basic message passing functionality
-- v1.1.0: Added callback timeout detection mechanism
-- v1.2.0: Added callback interrupt handling mechanism
-- v1.3.0: Optimized memory management, added message pool
 
 ## 11. License
 
