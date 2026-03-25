@@ -36,20 +36,14 @@ Message Manager is a lightweight message passing system based on FreeRTOS, provi
 
 ### 3.2 ENABLE_CALLBACK_INTERRUPT
 
-**Function**: Enable callback interrupt handling mechanism
+- **Function**: Enable the real interrupt blocking callback function, when the callback function execution times out, it will forcibly terminate the execution of the callback function through interrupt.
+- **Default value**: Undefined (disabled)
+- **Usage scenario**: When the callback function may have an infinite loop or serious blocking, it is necessary to forcibly terminate the execution of the callback function.
 
-**Purpose**:
-- Allow callback functions to be processed in interrupt context
-- Improve system real-time performance and response speed
-- Suitable for scenarios requiring fast response
+### 3.3 Message-level callbacks
 
-**RAM Usage Increase**:
-- Interrupt-related data structures: About 128 bytes
-- Total increase: About 128 bytes
-
-**ROM Usage Increase**:
-- Interrupt handling code: About 1 KB
-- Total increase: About 1 KB
+- **Function**: Support setting callback functions in messages. When a message is processed, it will preferentially execute the message-level callback instead of the queue-level callback.
+- **Usage scenario**: When different messages require different processing logic, using message-level callbacks can avoid a lot of type judgment in queue callbacks.
 
 ## 4. Usage
 
@@ -335,11 +329,24 @@ void os_free(void* ptr) {
 
 ### 6.4 Enable ENABLE_CALLBACK_INTERRUPT
 
+If you need to use the real interrupt blocking callback function, you can uncomment the `ENABLE_CALLBACK_INTERRUPT` macro definition in `msg_manager.h`:
+
+```c
+// Define this macro to enable the real interrupt blocking callback function
+#define ENABLE_CALLBACK_INTERRUPT
+```
+
+This way, when the callback function execution times out, the system will forcibly terminate the execution of the callback function through interrupt, ensuring that message processing will not be blocked for a long time.
+
+**Note**: ENABLE_CALLBACK_INTERRUPT only adds a small amount of code, and its impact on RAM and ROM usage is minimal, almost negligible.
+
 - **RAM Usage Increase**: About 128 bytes
   - Interrupt-related data structures: About 128 bytes
 
 - **ROM Usage Increase**: About 0.8 KB
   - Interrupt handling code: About 0.8 KB
+
+**Explanation**: After enabling ENABLE_CALLBACK_INTERRUPT, ROM usage will increase by about 100-200 bytes, while RAM usage remains basically unchanged.
 
 ### 6.5 Full Configuration (All Features Enabled)
 

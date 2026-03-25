@@ -22,10 +22,11 @@
 // 类型定义
 typedef TaskHandle_t os_task_handle;
 typedef SemaphoreHandle_t os_semaphore_handle;
+typedef StaticSemaphore_t  os_static_semaphore_t;
 typedef TimerHandle_t os_timer_handle;
 typedef QueueHandle_t os_queue_handle;
 typedef TickType_t os_tick_t;
-typedef StackType_t os_stack_t
+typedef StackType_t os_stack_t;
 typedef StaticTask_t os_static_task_t;
 typedef StaticQueue_t os_static_queue_t;
 typedef void (*os_task_func)(void *);

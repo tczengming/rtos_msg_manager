@@ -22,7 +22,7 @@ typedef struct msg_pool_item {
 
 /** 消息池 */
 static msg_pool_item msg_pool[MSG_POOL_SIZE] = { 0 };
-static StaticSemaphore_t msg_pool_mutex_buffer;
+static os_static_semaphore_t msg_pool_mutex_buffer;
 static os_semaphore_handle msg_pool_mutex = NULL;
 
 #ifdef ENABLE_CALLBACK_TIMEOUT
@@ -43,7 +43,7 @@ typedef struct callback_task_info {
     msg_base* current_msg;         // 当前处理的消息
     os_timer_handle timeout_timer;   // 超时定时器
     StaticTask_t task_buffer;      // 静态任务缓冲区
-    StackType_t task_stack[configMINIMAL_STACK_SIZE * 2];  // 任务栈
+    StackType_t task_stack[OS_MINIMAL_STACK_SIZE * 2];  // 任务栈
 } callback_task_info_t;
 
 // 任务池
@@ -177,10 +177,7 @@ static void prv_task_timeout_callback(os_timer_handle xTimer) {
         callback_task_info_t *task_info = &g_callback_task_pool[task_index];
         
         if (task_info->state == TASK_STATE_BUSY) {
-            printf("Callback task %d execution timeout!\n", task_index);
-            
-            // 强制终止任务
-            os_task_delete(task_info->handle);
+            os_log("Callback task %d execution timeout!", task_index);
             
             // 释放消息
             if (task_info->current_msg != NULL) {
@@ -188,16 +185,22 @@ static void prv_task_timeout_callback(os_timer_handle xTimer) {
                 task_info->current_msg = NULL;
             }
             
+            #ifdef ENABLE_CALLBACK_INTERRUPT
+            // 使用中断方式强制终止回调函数的执行
+            os_task_delete(task_info->handle);
+            os_log("Timeout callback task %d force deleted!", task_index);
+
             // 重新创建任务
             task_info->handle = os_task_create_static(
                 "CallbackTask",
                 prv_callback_task,
                 task_info,
-                configMINIMAL_STACK_SIZE * 2,
+                OS_MINIMAL_STACK_SIZE * 2,
                 MSG_DISPATCHER_PRIORITY + 1,
                 task_info->task_stack,
                 &task_info->task_buffer
             );
+            #endif
             
             // 重置状态
             task_info->state = TASK_STATE_IDLE;
@@ -219,7 +222,7 @@ static void prv_init_task_pool(void) {
             "CallbackTask",
             prv_callback_task,
             &g_callback_task_pool[i],
-            configMINIMAL_STACK_SIZE * 2,
+            OS_MINIMAL_STACK_SIZE * 2,
             MSG_DISPATCHER_PRIORITY + 1,
             g_callback_task_pool[i].task_stack,
             &g_callback_task_pool[i].task_buffer

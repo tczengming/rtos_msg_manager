@@ -40,6 +40,8 @@
 /** 定义此宏启用真正中断阻塞回调的功能 */
 //#define ENABLE_CALLBACK_INTERRUPT
 
+
+
 /**
  * @brief 消息句柄结构体
  *
